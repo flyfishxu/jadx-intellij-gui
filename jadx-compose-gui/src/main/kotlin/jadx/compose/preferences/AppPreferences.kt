@@ -1,6 +1,9 @@
 package jadx.compose.preferences
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.io.File
 import java.util.Locale
 import java.util.prefs.Preferences
@@ -8,7 +11,9 @@ import java.util.prefs.Preferences
 internal enum class Appearance { SYSTEM, LIGHT, LIGHT_HEADER, DARK }
 internal enum class Language { SYSTEM, ENGLISH, CHINESE }
 
-internal class AppPreferences(private val storage: Preferences = Preferences.userRoot().node("jadx/compose-gui")) {
+internal class AppPreferences(
+	private val storage: Preferences = Preferences.userRoot().node("jadx/compose-gui")
+) {
 	var appearance by mutableStateOf(enumValue(storage.get("appearance", ""), Appearance.SYSTEM))
 		private set
 	var language by mutableStateOf(enumValue(storage.get("language", ""), Language.SYSTEM))
@@ -17,23 +22,47 @@ internal class AppPreferences(private val storage: Preferences = Preferences.use
 		private set
 	var autoImportMapping by mutableStateOf(storage.getBoolean("autoImportMapping", true))
 		private set
-	var recent by mutableStateOf((0 until 8).mapNotNull { storage.get("recent.$it", null) }.distinct())
+	var recent by mutableStateOf((0 until 8).mapNotNull { storage.get("recent.$it", null) }
+		.distinct())
 		private set
 	val chinese get() = language == Language.CHINESE || (language == Language.SYSTEM && Locale.getDefault().language == "zh")
 	fun text(en: String, zh: String) = if (chinese) zh else en
-	fun appearance(value: Appearance) { appearance = value; storage.put("appearance", value.name) }
-	fun language(value: Language) { language = value; storage.put("language", value.name) }
-	fun fontSize(value: Int) { fontSize = value.coerceIn(11, 24); storage.putInt("fontSize", fontSize) }
-	fun autoImportMapping(value: Boolean) { autoImportMapping = value; storage.putBoolean("autoImportMapping", value) }
+	fun appearance(value: Appearance) {
+		appearance = value; storage.put("appearance", value.name)
+	}
+
+	fun language(value: Language) {
+		language = value; storage.put("language", value.name)
+	}
+
+	fun fontSize(value: Int) {
+		fontSize = value.coerceIn(11, 24); storage.putInt("fontSize", fontSize)
+	}
+
+	fun autoImportMapping(value: Boolean) {
+		autoImportMapping = value; storage.putBoolean("autoImportMapping", value)
+	}
+
 	fun remember(file: File) {
 		saveRecent((listOf(file.absolutePath) + recent).distinct().take(8))
 	}
-	fun removeRecent(path: String) { saveRecent(recent.filterNot { it == path }) }
+
+	fun removeRecent(path: String) {
+		saveRecent(recent.filterNot { it == path })
+	}
+
 	private fun saveRecent(paths: List<String>) {
 		recent = paths
-		(0 until 8).forEach { if (it < recent.size) storage.put("recent.$it", recent[it]) else storage.remove("recent.$it") }
+		(0 until 8).forEach {
+			if (it < recent.size) storage.put(
+				"recent.$it",
+				recent[it]
+			) else storage.remove("recent.$it")
+		}
 	}
-	private inline fun <reified T : Enum<T>> enumValue(raw: String, fallback: T): T = enumValues<T>().firstOrNull { it.name == raw } ?: fallback
+
+	private inline fun <reified T : Enum<T>> enumValue(raw: String, fallback: T): T =
+		enumValues<T>().firstOrNull { it.name == raw } ?: fallback
 }
 
 internal fun appearanceLabel(mode: Appearance, prefs: AppPreferences) = when (mode) {

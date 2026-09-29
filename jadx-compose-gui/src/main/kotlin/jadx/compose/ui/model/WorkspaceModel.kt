@@ -1,6 +1,10 @@
 package jadx.compose.ui.model
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import jadx.compose.decompiler.CodeMode
 import jadx.compose.decompiler.DecompilerSession
 import jadx.compose.decompiler.ProjectEntry
@@ -10,14 +14,27 @@ import jadx.compose.decompiler.SearchRequest
 import jadx.compose.decompiler.SourceDocument
 import jadx.compose.decompiler.search
 import jadx.compose.decompiler.usages
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.*
 
 internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { true }) : Closeable {
-	private val executor = Executors.newSingleThreadExecutor { task -> Thread(task, "jadx-session").apply { isDaemon = true } }
+	private val executor = Executors.newSingleThreadExecutor { task ->
+		Thread(task, "jadx-session").apply {
+			isDaemon = true
+		}
+	}
 	private val worker = executor.asCoroutineDispatcher()
 	private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 	private var session: DecompilerSession? = null // worker confined
@@ -75,7 +92,9 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 	var caret by mutableStateOf("1:1")
 	var caretOffset by mutableIntStateOf(0)
 	var jump by mutableStateOf<NavigationTarget?>(null)
-	val selected get() = if (settingsSelected) null else tabs.toList().firstOrNull { it.entry.id == selectedId }
+	val selected
+		get() = if (settingsSelected) null else tabs.toList()
+			.firstOrNull { it.entry.id == selectedId }
 
 	fun openSettings() {
 		requested = null
@@ -92,11 +111,23 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 		if (settingsSelected) closeSettings() else selectedId?.let(::closeTab)
 	}
 
-	fun open(input: File, onSuccess: (File) -> Unit = {}) = reload(input, null, false, onSuccess, discoverMapping = autoImportMapping())
-	fun openWithMapping(input: File, mapping: File, onSuccess: (File) -> Unit = {}) = reload(input, mapping, false, onSuccess)
-	fun importMapping(mapping: File?) { file?.let { reload(it, mapping, true) } }
+	fun open(input: File, onSuccess: (File) -> Unit = {}) =
+		reload(input, null, false, onSuccess, discoverMapping = autoImportMapping())
 
-	private fun reload(input: File, mappingFile: File?, preserveTabs: Boolean, onSuccess: (File) -> Unit = {}, discoverMapping: Boolean = false) {
+	fun openWithMapping(input: File, mapping: File, onSuccess: (File) -> Unit = {}) =
+		reload(input, mapping, false, onSuccess)
+
+	fun importMapping(mapping: File?) {
+		file?.let { reload(it, mapping, true) }
+	}
+
+	private fun reload(
+		input: File,
+		mappingFile: File?,
+		preserveTabs: Boolean,
+		onSuccess: (File) -> Unit = {},
+		discoverMapping: Boolean = false
+	) {
 		if (busy) return
 		cancelSearch()
 		cancelUsages()
@@ -108,34 +139,57 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 		scope.launch {
 			try {
 				val loaded = withContext(worker) {
-					var selectedMapping = mappingFile ?: if (discoverMapping && input.extension.equals("apk", ignoreCase = true)) {
-						File(input.absoluteFile.parentFile, "mapping.txt").takeIf { it.isFile }
-					} else null
+					var selectedMapping =
+						mappingFile ?: if (discoverMapping && input.extension.equals(
+								"apk",
+								ignoreCase = true
+							)
+						) {
+							File(input.absoluteFile.parentFile, "mapping.txt").takeIf { it.isFile }
+						} else null
 					var mappingError: String? = null
 					val next = try {
 						DecompilerSession.open(input, selectedMapping)
-					} catch (cancel: CancellationException) { throw cancel }
-					catch (failure: Exception) {
+					} catch (cancel: CancellationException) {
+						throw cancel
+					} catch (failure: Exception) {
 						// An unrelated/broken adjacent mapping must not prevent opening the APK.
 						if (!discoverMapping || selectedMapping == null) throw failure
-						mappingError = "Could not automatically import ${selectedMapping.absolutePath}: ${failure.message}. Opened APK without mapping."
+						mappingError =
+							"Could not automatically import ${selectedMapping.absolutePath}: ${failure.message}. Opened APK without mapping."
 						selectedMapping = null
 						DecompilerSession.open(input)
 					}
 					try {
 						val byId = next.entries.associateBy { it.id }
-						val restored = oldTabs.mapNotNull { doc -> byId[doc.entry.id]?.let { next.read(it, doc.mode) } }
-						val result = LoadedProject(next.entries, restored, next.mappingMatches, selectedMapping, mappingError)
+						val restored = oldTabs.mapNotNull { doc ->
+							byId[doc.entry.id]?.let {
+								next.read(
+									it,
+									doc.mode
+								)
+							}
+						}
+						val result = LoadedProject(
+							next.entries,
+							restored,
+							next.mappingMatches,
+							selectedMapping,
+							mappingError
+						)
 						session?.close()
 						session = next
 						result
-					} catch (failure: Throwable) { next.close(); throw failure }
+					} catch (failure: Throwable) {
+						next.close(); throw failure
+					}
 				}
 				entries = loaded.entries
 				requested = null
 				tabs.clear()
 				tabs.addAll(loaded.tabs)
-				selectedId = tabs.firstOrNull { it.entry.id == oldSelection }?.entry?.id ?: tabs.firstOrNull()?.entry?.id
+				selectedId = tabs.firstOrNull { it.entry.id == oldSelection }?.entry?.id
+					?: tabs.firstOrNull()?.entry?.id
 				file = input
 				mapping = loaded.mapping
 				mappingMatches = loaded.mappingMatches
@@ -152,15 +206,36 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 				throw cancel
 			} catch (failure: Exception) {
 				error = failure.message ?: failure.javaClass.simpleName
-			} finally { busy = false }
+			} finally {
+				busy = false
+			}
 		}
 	}
 
-	fun show(entry: ProjectEntry) = openDocument(OpenRequest(entry, tabs.firstOrNull { it.entry.id == entry.id }?.mode ?: CodeMode.JAVA, origin = currentLocation()))
-	fun showHit(hit: SearchHit) = openDocument(OpenRequest(hit.entry, hit.mode, hit, origin = currentLocation()))
-	fun setMode(mode: CodeMode) { selected?.let { openDocument(OpenRequest(it.entry, mode)) } }
+	fun show(entry: ProjectEntry) = openDocument(
+		OpenRequest(
+			entry,
+			tabs.firstOrNull { it.entry.id == entry.id }?.mode ?: CodeMode.JAVA,
+			origin = currentLocation()
+		)
+	)
+
+	fun showHit(hit: SearchHit) =
+		openDocument(OpenRequest(hit.entry, hit.mode, hit, origin = currentLocation()))
+
+	fun setMode(mode: CodeMode) {
+		selected?.let { openDocument(OpenRequest(it.entry, mode)) }
+	}
+
 	fun goToDefinition(document: SourceDocument, offset: Int) =
-		openDocument(OpenRequest(document.entry, document.mode, definition = document to offset, origin = CodeLocation(document.entry, document.mode, offset)))
+		openDocument(
+			OpenRequest(
+				document.entry,
+				document.mode,
+				definition = document to offset,
+				origin = CodeLocation(document.entry, document.mode, offset)
+			)
+		)
 
 	suspend fun canNavigate(document: SourceDocument, offset: Int): Boolean {
 		if (selected != document) return false
@@ -168,14 +243,20 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 		return try {
 			val available = withContext(worker) { session?.definition(document, offset) != null }
 			available && version == projectVersion && selected == document
-		} catch (cancel: CancellationException) { throw cancel }
-		catch (_: Exception) { false }
+		} catch (cancel: CancellationException) {
+			throw cancel
+		} catch (_: Exception) {
+			false
+		}
 	}
 
 	private fun openDocument(request: OpenRequest) {
 		requested = request
-		val existing = tabs.firstOrNull { it.entry.id == request.entry.id && it.mode == request.mode }
-		if (existing != null && request.definition == null) { selectDocument(existing, request); return }
+		val existing =
+			tabs.firstOrNull { it.entry.id == request.entry.id && it.mode == request.mode }
+		if (existing != null && request.definition == null) {
+			selectDocument(existing, request); return
+		}
 		if (busy) return
 		cancelSearch()
 		cancelUsages()
@@ -186,11 +267,20 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 				val result = withContext(worker) {
 					val activeSession = requireNotNull(session)
 					if (request.definition != null) {
-						activeSession.definition(request.definition.first, request.definition.second)
-					} else jadx.compose.decompiler.Declaration(activeSession.read(request.entry, request.mode), -1)
+						activeSession.definition(
+							request.definition.first,
+							request.definition.second
+						)
+					} else jadx.compose.decompiler.Declaration(
+						activeSession.read(
+							request.entry,
+							request.mode
+						), -1
+					)
 				}
 				if (result == null) {
-					if (requested == request) error = "No declaration is available in this input for the selected symbol."
+					if (requested == request) error =
+						"No declaration is available in this input for the selected symbol."
 					return@launch
 				}
 				val document = result.document
@@ -210,29 +300,52 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 		}
 	}
 
-	private fun selectDocument(document: SourceDocument, request: OpenRequest, definitionOffset: Int? = null) {
+	private fun selectDocument(
+		document: SourceDocument,
+		request: OpenRequest,
+		definitionOffset: Int? = null
+	) {
 		val hit = request.hit
 		val offset = definitionOffset ?: request.location?.offset ?: hit?.let {
 			if (it.symbolKey == null) it.offset else document.symbols.firstOrNull { symbol -> symbol.key == it.symbolKey }?.offset
 		}
 		val destination = offset ?: caretPositions[document.viewKey] ?: 0
-		if (request.recordHistory) history.record(request.origin, CodeLocation(document.entry, document.mode, destination))
+		if (request.recordHistory) history.record(
+			request.origin,
+			CodeLocation(document.entry, document.mode, destination)
+		)
 		settingsSelected = false
 		selectedId = document.entry.id
 		caretOffset = destination
-		if (hit != null && offset == null) error = "The symbol has no standalone declaration in the decompiled source (it may have been inlined)."
+		if (hit != null && offset == null) error =
+			"The symbol has no standalone declaration in the decompiled source (it may have been inlined)."
 		if (offset != null) applyJump(offset)
 	}
 
 	fun updateCaret(document: SourceDocument, label: String, offset: Int) {
 		caretPositions[document.viewKey] = offset
-		if (selected?.viewKey == document.viewKey) { caret = label; caretOffset = offset }
+		if (selected?.viewKey == document.viewKey) {
+			caret = label; caretOffset = offset
+		}
 	}
 
 	private fun currentLocation() = selected?.let { CodeLocation(it.entry, it.mode, caretOffset) }
-	fun goBack() { if (!busy) history.back(currentLocation())?.let(::restoreLocation) }
-	fun goForward() { if (!busy) history.forward(currentLocation())?.let(::restoreLocation) }
-	private fun restoreLocation(location: CodeLocation) = openDocument(OpenRequest(location.entry, location.mode, location = location, recordHistory = false))
+	fun goBack() {
+		if (!busy) history.back(currentLocation())?.let(::restoreLocation)
+	}
+
+	fun goForward() {
+		if (!busy) history.forward(currentLocation())?.let(::restoreLocation)
+	}
+
+	private fun restoreLocation(location: CodeLocation) = openDocument(
+		OpenRequest(
+			location.entry,
+			location.mode,
+			location = location,
+			recordHistory = false
+		)
+	)
 
 	fun findUsages(document: SourceDocument, offset: Int) {
 		if (busy || selected != document) return
@@ -250,13 +363,21 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 		usageJob = scope.launch {
 			try {
 				withContext(worker) {
-					requireNotNull(session).usages(document, reference.start, cancellation::get) { update ->
+					requireNotNull(session).usages(
+						document,
+						reference.start,
+						cancellation::get
+					) { update ->
 						scope.launch { if (generation == usageGeneration) usagesProgress = update }
 					}
 				}
-			} catch (cancel: CancellationException) { throw cancel }
-			catch (failure: Exception) { if (generation == usageGeneration) usagesError = failure.message }
-			finally { if (generation == usageGeneration) usagesBusy = false }
+			} catch (cancel: CancellationException) {
+				throw cancel
+			} catch (failure: Exception) {
+				if (generation == usageGeneration) usagesError = failure.message
+			} finally {
+				if (generation == usageGeneration) usagesBusy = false
+			}
 		}
 	}
 
@@ -267,7 +388,10 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 		usageGeneration++
 		usagesBusy = false
 	}
-	fun closeUsages() { cancelUsages(); usagesVisible = false; editorFocusRequest++ }
+
+	fun closeUsages() {
+		cancelUsages(); usagesVisible = false; editorFocusRequest++
+	}
 
 	fun search(request: SearchRequest) {
 		if (file == null || busy) return
@@ -277,7 +401,11 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 		lastSearchRequest = request
 		searchProgress = SearchProgress()
 		if (request.query.isBlank()) return
-		try { request.pattern() } catch (failure: Exception) { searchError = failure.message; return }
+		try {
+			request.pattern()
+		} catch (failure: Exception) {
+			searchError = failure.message; return
+		}
 		val generation = searchGeneration
 		val cancellation = AtomicBoolean(false).also { searchCancellation = it }
 		searchBusy = true
@@ -288,9 +416,13 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 						scope.launch { if (generation == searchGeneration) searchProgress = update }
 					}
 				}
-			} catch (cancel: CancellationException) { throw cancel }
-			catch (failure: Exception) { if (generation == searchGeneration) searchError = failure.message }
-			finally { if (generation == searchGeneration) searchBusy = false }
+			} catch (cancel: CancellationException) {
+				throw cancel
+			} catch (failure: Exception) {
+				if (generation == searchGeneration) searchError = failure.message
+			} finally {
+				if (generation == searchGeneration) searchBusy = false
+			}
 		}
 	}
 
@@ -301,7 +433,10 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 		searchBusy = false
 	}
 
-	fun selectTab(id: String) { tabs.firstOrNull { it.entry.id == id }?.let { show(it.entry) } }
+	fun selectTab(id: String) {
+		tabs.firstOrNull { it.entry.id == id }?.let { show(it.entry) }
+	}
+
 	fun closeTab(id: String) {
 		val index = tabs.indexOfFirst { it.entry.id == id }
 		if (index < 0) return
@@ -311,11 +446,21 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 			if (selectedId == null && settingsOpen) settingsSelected = true
 		}
 	}
+
 	fun jumpTo(offset: Int) {
-		selected?.let { history.record(currentLocation(), CodeLocation(it.entry, it.mode, offset)); applyJump(offset) }
+		selected?.let {
+			history.record(
+				currentLocation(),
+				CodeLocation(it.entry, it.mode, offset)
+			); applyJump(offset)
+		}
 	}
+
 	private fun applyJump(offset: Int) {
-		selected?.let { caretOffset = offset; caretPositions[it.viewKey] = offset; jump = NavigationTarget(it.viewKey, offset, (jump?.serial ?: 0) + 1) }
+		selected?.let {
+			caretOffset = offset; caretPositions[it.viewKey] = offset; jump =
+			NavigationTarget(it.viewKey, offset, (jump?.serial ?: 0) + 1)
+		}
 	}
 
 	override fun close() {
@@ -328,9 +473,12 @@ internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { t
 	}
 }
 
-private data class OpenRequest(val entry: ProjectEntry, val mode: CodeMode, val hit: SearchHit? = null,
+private data class OpenRequest(
+	val entry: ProjectEntry, val mode: CodeMode, val hit: SearchHit? = null,
 	val definition: Pair<SourceDocument, Int>? = null, val origin: CodeLocation? = null,
-	val location: CodeLocation? = null, val recordHistory: Boolean = true)
+	val location: CodeLocation? = null, val recordHistory: Boolean = true
+)
+
 internal data class NavigationTarget(val viewKey: String, val offset: Int, val serial: Int)
 
 private data class LoadedProject(

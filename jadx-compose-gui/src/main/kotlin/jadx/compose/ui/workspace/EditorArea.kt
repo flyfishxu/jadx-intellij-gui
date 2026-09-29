@@ -1,8 +1,16 @@
 package jadx.compose.ui.workspace
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.movableContentOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -12,70 +20,116 @@ import jadx.compose.decompiler.EntryKind
 import jadx.compose.preferences.AppPreferences
 import jadx.compose.ui.components.Rule
 import jadx.compose.ui.components.editorBackground
-import jadx.compose.ui.model.WorkspaceModel
-import jadx.compose.ui.settings.SettingsPage
-import jadx.compose.ui.search.UsagesPanel
 import jadx.compose.ui.editor.CodeEditor
 import jadx.compose.ui.editor.StructurePanel
+import jadx.compose.ui.model.WorkspaceModel
+import jadx.compose.ui.search.UsagesPanel
+import jadx.compose.ui.settings.SettingsPage
 import org.jetbrains.jewel.foundation.theme.JewelTheme
-import org.jetbrains.jewel.ui.component.*
+import org.jetbrains.jewel.ui.component.HorizontalSplitLayout
+import org.jetbrains.jewel.ui.component.InlineErrorBanner
+import org.jetbrains.jewel.ui.component.SimpleTabContent
+import org.jetbrains.jewel.ui.component.TabData
+import org.jetbrains.jewel.ui.component.TabStrip
+import org.jetbrains.jewel.ui.component.Text
+import org.jetbrains.jewel.ui.component.VerticalSplitLayout
+import org.jetbrains.jewel.ui.component.rememberSplitLayoutState
 import org.jetbrains.jewel.ui.icons.AllIconsKeys
 import org.jetbrains.jewel.ui.theme.editorTabStyle
 
 @Composable
-internal fun EditorArea(model: WorkspaceModel, prefs: AppPreferences, structure: Boolean, find: Boolean, closeFind: () -> Unit, open: () -> Unit) {
+internal fun EditorArea(
+	model: WorkspaceModel,
+	prefs: AppPreferences,
+	structure: Boolean,
+	find: Boolean,
+	closeFind: () -> Unit,
+	open: () -> Unit
+) {
 	val editorStates = key(model.projectVersion) { rememberSaveableStateHolder() }
 	val document = model.selected
 	val currentEditor by rememberUpdatedState<@Composable () -> Unit> {
 		Column(Modifier.fillMaxSize().testTag("editor-pane").background(editorBackground)) {
 			val tabData = buildList {
 				model.tabs.forEach { doc ->
-					add(TabData.Editor(
-						selected = !model.settingsSelected && doc.entry.id == model.selectedId,
-						content = { state ->
-							SimpleTabContent(doc.entry.name, state,
-								iconKey = if (doc.entry.kind == EntryKind.CLASS) AllIconsKeys.Nodes.Class else AllIconsKeys.FileTypes.Text)
-						},
-						closable = true,
-						onClose = {
-							model.closeTab(doc.entry.id)
-							CodeMode.entries.forEach { editorStates.removeState("${doc.entry.id}:${it.name}") }
-						},
-						onClick = { model.selectTab(doc.entry.id) },
-					))
+					add(
+						TabData.Editor(
+							selected = !model.settingsSelected && doc.entry.id == model.selectedId,
+							content = { state ->
+								SimpleTabContent(
+									doc.entry.name, state,
+									iconKey = if (doc.entry.kind == EntryKind.CLASS) AllIconsKeys.Nodes.Class else AllIconsKeys.FileTypes.Text
+								)
+							},
+							closable = true,
+							onClose = {
+								model.closeTab(doc.entry.id)
+								CodeMode.entries.forEach { editorStates.removeState("${doc.entry.id}:${it.name}") }
+							},
+							onClick = { model.selectTab(doc.entry.id) },
+						)
+					)
 				}
 				if (model.settingsOpen) {
-					add(TabData.Editor(
-						selected = model.settingsSelected,
-						content = { state ->
-							SimpleTabContent(prefs.text("Settings", "设置"), state,
-								modifier = Modifier.testTag("settings-tab"), iconKey = AllIconsKeys.General.Settings)
-						},
-						closable = true,
-						onClose = model::closeSettings,
-						onClick = model::openSettings,
-					))
+					add(
+						TabData.Editor(
+							selected = model.settingsSelected,
+							content = { state ->
+								SimpleTabContent(
+									prefs.text("Settings", "设置"),
+									state,
+									modifier = Modifier.testTag("settings-tab"),
+									iconKey = AllIconsKeys.General.Settings
+								)
+							},
+							closable = true,
+							onClose = model::closeSettings,
+							onClick = model::openSettings,
+						)
+					)
 				}
 			}
 			if (tabData.isNotEmpty()) {
-				TabStrip(tabData, style = JewelTheme.editorTabStyle,
-					modifier = Modifier.fillMaxWidth().testTag("editor-tabs"))
+				TabStrip(
+					tabData, style = JewelTheme.editorTabStyle,
+					modifier = Modifier.fillMaxWidth().testTag("editor-tabs")
+				)
 				Rule()
 			}
 			model.error?.let { message ->
-				InlineErrorBanner(Modifier.fillMaxWidth(), iconActions = { iconAction(AllIconsKeys.Actions.Close, prefs.text("Dismiss", "关闭")) { model.error = null } }) { Text(message) }
+				InlineErrorBanner(
+					Modifier.fillMaxWidth(),
+					iconActions = {
+						iconAction(
+							AllIconsKeys.Actions.Close,
+							prefs.text("Dismiss", "关闭")
+						) { model.error = null }
+					}) { Text(message) }
 			}
 			if (model.settingsSelected) SettingsPage(prefs)
 			else if (document == null) Welcome(model, prefs, open)
 			else {
 				Box(Modifier.weight(1f)) {
 					editorStates.SaveableStateProvider(document.viewKey) {
-						CodeEditor(document, prefs, find, closeFind, model.jump,
-							onNavigate = { model.goToDefinition(document, it) }, canNavigate = { model.canNavigate(document, it) },
-							onFindUsages = { model.findUsages(document, it) }, focusRequest = model.editorFocusRequest,
+						CodeEditor(
+							document,
+							prefs,
+							find,
+							closeFind,
+							model.jump,
+							onNavigate = { model.goToDefinition(document, it) },
+							canNavigate = { model.canNavigate(document, it) },
+							onFindUsages = { model.findUsages(document, it) },
+							focusRequest = model.editorFocusRequest,
 							back = if (model.history.canGoBack && !model.busy) model::goBack else null,
 							forward = if (model.history.canGoForward && !model.busy) model::goForward else null,
-							onCaret = { caret, offset -> model.updateCaret(document, caret, offset) })
+							onCaret = { caret, offset ->
+								model.updateCaret(
+									document,
+									caret,
+									offset
+								)
+							})
 					}
 				}
 			}
@@ -93,7 +147,11 @@ internal fun EditorArea(model: WorkspaceModel, prefs: AppPreferences, structure:
 	// Moving into/out of the tool-window split must retain editor selection, focus and scroll.
 	val content = remember { movableContentOf { currentContent() } }
 	if (model.usagesVisible) VerticalSplitLayout(
-		first = content, second = { UsagesPanel(model, prefs) }, state = rememberSplitLayoutState(.72f),
-		firstPaneMinWidth = 220.dp, secondPaneMinWidth = 120.dp, modifier = Modifier.fillMaxSize(),
+		first = content,
+		second = { UsagesPanel(model, prefs) },
+		state = rememberSplitLayoutState(.72f),
+		firstPaneMinWidth = 220.dp,
+		secondPaneMinWidth = 120.dp,
+		modifier = Modifier.fillMaxSize(),
 	) else content()
 }

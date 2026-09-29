@@ -7,7 +7,11 @@ import androidx.compose.ui.text.buildAnnotatedString
 import jadx.compose.decompiler.CodeMode
 
 /** Lexical coloring only; jadx owns decompilation and source positions. */
-internal fun highlight(code: String, dark: Boolean, mode: CodeMode = CodeMode.JAVA): AnnotatedString {
+internal fun highlight(
+	code: String,
+	dark: Boolean,
+	mode: CodeMode = CodeMode.JAVA
+): AnnotatedString {
 	val keyword = if (dark) Color(0xFFCF8E6D) else Color(0xFF0033B3)
 	val string = if (dark) Color(0xFF6AAB73) else Color(0xFF067D17)
 	val comment = if (dark) Color(0xFF7A7E85) else Color(0xFF8C8C8C)
@@ -18,7 +22,10 @@ internal fun highlight(code: String, dark: Boolean, mode: CodeMode = CodeMode.JA
 		(if (mode == CodeMode.SMALI) smaliTokens else tokens).findAll(code).forEach { match ->
 			val token = match.value
 			val color = when {
-				token.startsWith("#") || token.startsWith("//") || token.startsWith("/*") || token.startsWith("<!--") -> comment
+				token.startsWith("#") || token.startsWith("//") || token.startsWith("/*") || token.startsWith(
+					"<!--"
+				) -> comment
+
 				token.startsWith('"') || token.startsWith('\'') -> string
 				token.startsWith('@') -> annotation
 				token.first().isDigit() -> number

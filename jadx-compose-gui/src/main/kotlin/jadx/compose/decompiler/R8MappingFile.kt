@@ -12,10 +12,13 @@ import java.nio.file.Files
  * This is a rename mapping, not a replacement for R8 Retrace or its line-number metadata.
  */
 internal class R8MappingFile private constructor(val file: File) : Closeable {
-	override fun close() { Files.deleteIfExists(file.toPath()) }
+	override fun close() {
+		Files.deleteIfExists(file.toPath())
+	}
 
 	companion object {
-		private val methodLine = Regex("^\\s+(?:(\\d+):(\\d+):)?(\\S+)\\s+([^\\s(]+)\\(([^)]*)\\)(?::\\d+(?::\\d+)?)?\\s+->\\s+(\\S+)\\s*$")
+		private val methodLine =
+			Regex("^\\s+(?:(\\d+):(\\d+):)?(\\S+)\\s+([^\\s(]+)\\(([^)]*)\\)(?::\\d+(?::\\d+)?)?\\s+->\\s+(\\S+)\\s*$")
 
 		fun prepare(source: File): R8MappingFile {
 			val target = Files.createTempFile("jadx-compose-mapping-", ".txt").toFile()
@@ -24,8 +27,15 @@ internal class R8MappingFile private constructor(val file: File) : Closeable {
 					var group: String? = null
 					var candidate: String? = null
 					val emitted = hashSetOf<String>()
-					fun emit(line: String) { if (emitted.add(line)) { out.write(line); out.newLine() } }
-					fun flush() { candidate?.let(::emit); candidate = null; group = null }
+					fun emit(line: String) {
+						if (emitted.add(line)) {
+							out.write(line); out.newLine()
+						}
+					}
+
+					fun flush() {
+						candidate?.let(::emit); candidate = null; group = null
+					}
 					source.bufferedReader().useLines { lines ->
 						lines.forEach { line ->
 							if (line.isBlank() || line.trimStart().startsWith('#')) return@forEach
@@ -36,9 +46,11 @@ internal class R8MappingFile private constructor(val file: File) : Closeable {
 								emit(line)
 							} else {
 								val (start, end, type, name, arguments, obfuscated) = match.destructured
-								val normalized = if ('.' in name) null else "    $type $name($arguments) -> $obfuscated"
-								if (start.isEmpty()) { flush(); normalized?.let(::emit) }
-								else {
+								val normalized =
+									if ('.' in name) null else "    $type $name($arguments) -> $obfuscated"
+								if (start.isEmpty()) {
+									flush(); normalized?.let(::emit)
+								} else {
 									val key = "$obfuscated:$start:$end"
 									if (key != group) flush()
 									group = key
@@ -50,7 +62,9 @@ internal class R8MappingFile private constructor(val file: File) : Closeable {
 					flush()
 				}
 				return R8MappingFile(target)
-			} catch (failure: Throwable) { target.delete(); throw failure }
+			} catch (failure: Throwable) {
+				target.delete(); throw failure
+			}
 		}
 	}
 }

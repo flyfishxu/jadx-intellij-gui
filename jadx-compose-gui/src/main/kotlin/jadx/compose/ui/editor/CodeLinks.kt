@@ -1,18 +1,37 @@
 package jadx.compose.ui.editor
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.IntSize
 import jadx.compose.decompiler.CodeMode
 import jadx.compose.decompiler.SourceDocument
 import jadx.compose.ui.window.LocalForceClick
@@ -54,7 +73,9 @@ internal class CodeLinks(private val document: SourceDocument) {
 		var offset = measured.getOffsetForPosition(point)
 		if (offset > 0 && measured.getBoundingBox(offset - 1).contains(point)) offset--
 		val code = document.code
-		if (offset !in code.indices || !measured.getBoundingBox(offset).contains(point) || !Character.isJavaIdentifierPart(code[offset])) return null
+		if (offset !in code.indices || !measured.getBoundingBox(offset)
+				.contains(point) || !Character.isJavaIdentifierPart(code[offset])
+		) return null
 		var start = offset
 		var end = offset + 1
 		while (start > 0 && Character.isJavaIdentifierPart(code[start - 1])) start--
@@ -76,9 +97,15 @@ internal fun rememberCodeLinks(
 	val window = LocalWindowInfo.current
 	val modifiers = window.keyboardModifiers
 	val modifierState = LocalNavigationModifier.current
-	val held = (modifierState?.value == true || modifiers.isMetaPressed || modifiers.isCtrlPressed) && window.isWindowFocused
+	val held =
+		(modifierState?.value == true || modifiers.isMetaPressed || modifiers.isCtrlPressed) && window.isWindowFocused
 	// Read scroll state as well as layout: LayoutCoordinates themselves mutate during scrolling.
-	val range = remember(links.pointer, held, scrollPosition, links.geometryRevision) { links.rangeAt(links.pointer) }
+	val range = remember(
+		links.pointer,
+		held,
+		scrollPosition,
+		links.geometryRevision
+	) { links.rangeAt(links.pointer) }
 	val resolved = remember(document) { mutableMapOf<Int, Boolean>() }
 	var verifiedRange by remember(document) { mutableStateOf<TextRange?>(null) }
 	LaunchedEffect(range, held) {
@@ -97,18 +124,23 @@ internal fun rememberCodeLinks(
 	SideEffect { forceClick?.target = range?.let { { navigate(it.start) } } }
 	DisposableEffect(links, forceClick) { onDispose { forceClick?.target = null } }
 	links.viewportModifier = Modifier.onGloballyPositioned { links.viewport = it }
-		.pointerHoverIcon(if (activeRange != null) PointerIcon.Hand else PointerIcon.Text, overrideDescendants = true)
+		.pointerHoverIcon(
+			if (activeRange != null) PointerIcon.Hand else PointerIcon.Text,
+			overrideDescendants = true
+		)
 		.pointerInput(links) {
 			awaitPointerEventScope {
 				var navigating = false
 				while (true) {
 					val event = awaitPointerEvent(PointerEventPass.Initial)
-					modifierState?.value = event.keyboardModifiers.isMetaPressed || event.keyboardModifiers.isCtrlPressed
+					modifierState?.value =
+						event.keyboardModifiers.isMetaPressed || event.keyboardModifiers.isCtrlPressed
 					val point = event.changes.firstOrNull()?.position
 					links.pointer = if (event.type == PointerEventType.Exit) null else point
 					if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed &&
 						(event.keyboardModifiers.isMetaPressed || event.keyboardModifiers.isCtrlPressed ||
-							window.keyboardModifiers.isMetaPressed || window.keyboardModifiers.isCtrlPressed)) {
+								window.keyboardModifiers.isMetaPressed || window.keyboardModifiers.isCtrlPressed)
+					) {
 						links.rangeAt(point)?.let { token ->
 							navigating = true
 							if (resolved[token.start] != false) navigate(token.start)
@@ -131,7 +163,11 @@ internal fun linkedCode(highlighted: AnnotatedString, range: TextRange?): Annota
 	val color = JewelTheme.linkStyle.colors.contentHovered
 	return remember(highlighted, range, color) {
 		if (range == null) highlighted else AnnotatedString.Builder(highlighted).apply {
-			addStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline), range.start, range.end)
+			addStyle(
+				SpanStyle(color = color, textDecoration = TextDecoration.Underline),
+				range.start,
+				range.end
+			)
 		}.toAnnotatedString()
 	}
 }

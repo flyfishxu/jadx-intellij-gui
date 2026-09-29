@@ -12,21 +12,32 @@ import java.io.Closeable
 import java.io.File
 
 /** The only adapter to jadx. All calls, including close, run on the session worker. */
-internal class DecompilerSession private constructor(private val jadx: JadxDecompiler, private val preparedMapping: R8MappingFile?) : Closeable {
+internal class DecompilerSession private constructor(
+	private val jadx: JadxDecompiler,
+	private val preparedMapping: R8MappingFile?
+) : Closeable {
 	internal val classes = jadx.classes.associateBy { "class:${it.rawName}" }
-	internal val resources = jadx.resources.withIndex().associate { "resource:${it.index}" to it.value }
+	internal val resources =
+		jadx.resources.withIndex().associate { "resource:${it.index}" to it.value }
 	val entries: List<ProjectEntry> = classes.map { (id, cls) ->
 		ProjectEntry(id, cls.name + ".java", cls.fullName, cls.`package`, EntryKind.CLASS)
 	}.sortedBy { it.path } + resources.map { (id, resource) ->
 		val path = resource.deobfName.let { if (File(it).isAbsolute) File(it).name else it }
-		ProjectEntry(id, path.substringAfterLast('/'), path, path.substringBeforeLast('/', ""), EntryKind.RESOURCE)
+		ProjectEntry(
+			id,
+			path.substringAfterLast('/'),
+			path,
+			path.substringBeforeLast('/', ""),
+			EntryKind.RESOURCE
+		)
 	}.sortedBy { it.path }
 
 	val allClasses: List<JavaClass> by lazy { jadx.classesWithInners }
-	val mappingMatches: Int get() {
-		val tree = RenameMappingsData.getTree(jadx.root) ?: return 0
-		return allClasses.count { tree.getClass(it.rawName.replace('.', '/')) != null }
-	}
+	val mappingMatches: Int
+		get() {
+			val tree = RenameMappingsData.getTree(jadx.root) ?: return 0
+			return allClasses.count { tree.getClass(it.rawName.replace('.', '/')) != null }
+		}
 
 	internal fun nodeAt(document: SourceDocument, offset: Int): jadx.api.JavaNode? {
 		if (document.mode != CodeMode.JAVA) return null
@@ -56,20 +67,59 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 			val code = info.codeStr
 			val symbols = buildList {
 				fun collect(current: JavaClass) {
-					add(Symbol(current.name, current.defPos, SymbolKind.CLASS, "c:${current.rawName}"))
-					current.fields.forEach { add(Symbol("${it.name}: ${it.type}", it.defPos, SymbolKind.FIELD, "f:${current.rawName}:${it.rawName}")) }
+					add(
+						Symbol(
+							current.name,
+							current.defPos,
+							SymbolKind.CLASS,
+							"c:${current.rawName}"
+						)
+					)
+					current.fields.forEach {
+						add(
+							Symbol(
+								"${it.name}: ${it.type}",
+								it.defPos,
+								SymbolKind.FIELD,
+								"f:${current.rawName}:${it.rawName}"
+							)
+						)
+					}
 					current.methods.forEach {
-						add(Symbol((if (it.isConstructor) current.name else it.name) + "(" + it.arguments.joinToString(", ") + ")",
-							it.defPos, SymbolKind.METHOD, "m:${current.rawName}:${it.methodNode.methodInfo.shortId}"))
+						add(
+							Symbol(
+								(if (it.isConstructor) current.name else it.name) + "(" + it.arguments.joinToString(
+									", "
+								) + ")",
+								it.defPos,
+								SymbolKind.METHOD,
+								"m:${current.rawName}:${it.methodNode.methodInfo.shortId}"
+							)
+						)
 					}
 					current.innerClasses.forEach(::collect)
 				}
 				collect(cls)
 			}
-			return SourceDocument(entry, code, "Java", symbols, jadx.errorsCount, jadx.warnsCount, references = codeReferences(jadx, info))
+			return SourceDocument(
+				entry,
+				code,
+				"Java",
+				symbols,
+				jadx.errorsCount,
+				jadx.warnsCount,
+				references = codeReferences(jadx, info)
+			)
 		}
 		val resource = requireNotNull(resources[entry.id]) { "Resource no longer available" }
-		return SourceDocument(entry, readResource(resource), resource.type.name, emptyList(), jadx.errorsCount, jadx.warnsCount)
+		return SourceDocument(
+			entry,
+			readResource(resource),
+			resource.type.name,
+			emptyList(),
+			jadx.errorsCount,
+			jadx.warnsCount
+		)
 	}
 
 	internal fun readResource(resource: ResourceFile): String {
@@ -80,6 +130,7 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 				append(content.text.codeStr)
 				content.subFiles.forEach { append("\n\n// ${it.name}\n"); append(it.text.codeStr) }
 			}
+
 			else -> ResourcesLoader.decodeStream(resource) { _, stream ->
 				val bytes = stream.readNBytes(MAX_RESOURCE_BYTES + 1)
 				require(bytes.size <= MAX_RESOURCE_BYTES) { "Resource exceeds the 2 MiB text preview limit" }
@@ -89,7 +140,13 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 		}
 	}
 
-	override fun close() { try { jadx.close() } finally { preparedMapping?.close() } }
+	override fun close() {
+		try {
+			jadx.close()
+		} finally {
+			preparedMapping?.close()
+		}
+	}
 
 	companion object {
 		private const val MAX_RESOURCE_BYTES = 2 * 1024 * 1024
@@ -104,7 +161,10 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 				if (mapping != null) {
 					userRenamesMappingsPath = requireNotNull(preparedMapping).file.toPath()
 					userRenamesMappingsMode = UserRenamesMappingsMode.READ
-					pluginOptions = mapOf("rename-mappings.format" to "PROGUARD_FILE", "rename-mappings.invert" to "yes")
+					pluginOptions = mapOf(
+						"rename-mappings.format" to "PROGUARD_FILE",
+						"rename-mappings.invert" to "yes"
+					)
 				}
 			})
 			try {
@@ -115,7 +175,11 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 				require(session.entries.isNotEmpty()) { "No classes or resources found in ${file.name}" }
 				return session
 			} catch (error: Throwable) {
-				try { jadx.close() } finally { preparedMapping?.close() }
+				try {
+					jadx.close()
+				} finally {
+					preparedMapping?.close()
+				}
 				throw error
 			}
 		}
@@ -124,9 +188,11 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 
 internal fun smaliSymbols(code: String): List<Symbol> =
 	Regex("(?m)^\\.(class|method|field)\\s+([^\\n]+)").findAll(code).map {
-		Symbol(it.groupValues[2], it.range.first, when (it.groupValues[1]) {
-			"class" -> SymbolKind.CLASS
-			"field" -> SymbolKind.FIELD
-			else -> SymbolKind.METHOD
-		})
+		Symbol(
+			it.groupValues[2], it.range.first, when (it.groupValues[1]) {
+				"class" -> SymbolKind.CLASS
+				"field" -> SymbolKind.FIELD
+				else -> SymbolKind.METHOD
+			}
+		)
 	}.toList()

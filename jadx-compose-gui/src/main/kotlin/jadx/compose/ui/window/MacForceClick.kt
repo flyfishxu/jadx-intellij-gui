@@ -22,23 +22,38 @@ internal class MacForceClick(private val root: JComponent) : Closeable {
 			val getStage = eventType.getMethod("getStage")
 			val consume = eventType.getMethod("consume")
 			var deepPressed = false
-			val listener = Proxy.newProxyInstance(listenerType.classLoader, arrayOf(listenerType)) { proxy, method, args ->
+			val listener = Proxy.newProxyInstance(
+				listenerType.classLoader,
+				arrayOf(listenerType)
+			) { proxy, method, args ->
 				when (method.name) {
 					"pressure" -> {
 						val event = requireNotNull(args)[0]
 						val deep = (getStage.invoke(event) as Double) >= 2.0
-						if (!closed && deep && !deepPressed) target?.let { action -> action(); consume.invoke(event) }
+						if (!closed && deep && !deepPressed) target?.let { action ->
+							action(); consume.invoke(
+							event
+						)
+						}
 						deepPressed = deep
 						null
 					}
+
 					"equals" -> proxy === args?.get(0)
 					"hashCode" -> System.identityHashCode(proxy)
 					"toString" -> "JadxForceClickListener"
 					else -> null
 				}
 			}
-			utilities.getMethod("addGestureListenerTo", JComponent::class.java, gestureType).invoke(null, root, listener)
-			remove = { utilities.getMethod("removeGestureListenerFrom", JComponent::class.java, gestureType).invoke(null, root, listener) }
+			utilities.getMethod("addGestureListenerTo", JComponent::class.java, gestureType)
+				.invoke(null, root, listener)
+			remove = {
+				utilities.getMethod(
+					"removeGestureListenerFrom",
+					JComponent::class.java,
+					gestureType
+				).invoke(null, root, listener)
+			}
 		}.onFailure { System.err.println("Force Click unavailable: ${it.message}") }
 	}
 
