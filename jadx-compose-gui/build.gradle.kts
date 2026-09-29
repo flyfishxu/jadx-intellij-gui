@@ -1,15 +1,14 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
-	kotlin("jvm") version "2.4.20"
-	id("org.jetbrains.kotlin.plugin.compose") version "2.4.20"
-	id("org.jetbrains.compose") version "1.12.0"
+	// The root buildSrc already provides the catalog's Kotlin JVM plugin.
+	id("org.jetbrains.kotlin.jvm")
+	alias(libs.plugins.kotlin.compose)
+	alias(libs.plugins.compose)
 }
 
-version = "1.0.0"
-group = "jadx.compose"
-
-val jewelVersion = "0.41.0-262.10968.63"
+version = rootProject.extra["jadxVersion"] as String
+group = "io.github.skylot"
 
 kotlin {
 	compilerOptions {
@@ -27,20 +26,20 @@ configurations.configureEach {
 }
 
 dependencies {
-	implementation("io.github.skylot:jadx-core:local")
-	implementation("io.github.skylot:jadx-rename-mappings:local")
-	runtimeOnly("io.github.skylot:jadx-dex-input:local")
-	runtimeOnly("io.github.skylot:jadx-java-input:local")
-	runtimeOnly("io.github.skylot:jadx-smali-input:local")
+	implementation(project(":jadx-core"))
+	implementation(project(":jadx-plugins:jadx-rename-mappings"))
+	runtimeOnly(project(":jadx-plugins:jadx-dex-input"))
+	runtimeOnly(project(":jadx-plugins:jadx-java-input"))
+	runtimeOnly(project(":jadx-plugins:jadx-smali-input"))
 	implementation(compose.desktop.currentOs) { exclude(group = "org.jetbrains.compose.material") }
-	implementation("org.jetbrains.jewel:jewel-int-ui-standalone:$jewelVersion")
-	implementation("org.jetbrains.jewel:jewel-int-ui-decorated-window:$jewelVersion")
-	implementation("com.jetbrains.intellij.platform:icons:262.10315.125")
-	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
-	implementation("com.formdev:flatlaf-fonts-jetbrains-mono:2.304")
-	runtimeOnly("org.slf4j:slf4j-simple:2.0.20")
+	implementation(libs.jewel.standalone)
+	implementation(libs.jewel.decorated.window)
+	implementation(libs.intellij.icons)
+	implementation(libs.kotlinx.coroutines.swing)
+	implementation(libs.flatlaf.fonts.jetbrains.mono)
+	runtimeOnly(libs.slf4j.simple)
 	testImplementation(kotlin("test-junit"))
-	testImplementation("org.jetbrains.compose.ui:ui-test-junit4:1.12.0")
+	testImplementation(libs.compose.ui.test)
 }
 
 val jbr = javaToolchains.launcherFor {
@@ -58,13 +57,14 @@ compose.desktop {
 		nativeDistributions {
 			targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
 			packageName = "Jadx Compose"
-			packageVersion = project.version.toString()
+			// Native installers require a numeric version, including for dev builds.
+			packageVersion = project.version.toString().takeIf { it.matches(Regex("\\d+(\\.\\d+){0,2}")) } ?: "1.0.0"
 			modules("java.desktop", "java.logging", "java.prefs", "java.xml", "jdk.unsupported")
 			macOS {
 				bundleID = "io.github.flyfishxu.jadx.compose"
-				iconFile.set(file("../jadx-gui/dist/macos/jadx-logo.icns"))
+				iconFile.set(rootProject.file("jadx-gui/dist/macos/jadx-logo.icns"))
 			}
-			windows { iconFile.set(file("../jadx-gui/dist/windows/jadx-logo.ico")) }
+			windows { iconFile.set(rootProject.file("jadx-gui/dist/windows/jadx-logo.ico")) }
 		}
 	}
 }

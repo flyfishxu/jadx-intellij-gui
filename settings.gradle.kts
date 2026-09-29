@@ -11,6 +11,10 @@ dependencyResolutionManagement {
 		mavenCentral()
 		// required for: aapt-proto, R8, Smali
 		google()
+		// Compose GUI: IntelliJ platform icons used by Jewel.
+		maven("https://www.jetbrains.com/intellij-repository/snapshots") {
+			content { includeGroupByRegex("com\\.jetbrains\\..*") }
+		}
 	}
 	repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
 }
@@ -29,6 +33,7 @@ include("jadx-core")
 include("jadx-cli")
 include("jadx-gui-api")
 include("jadx-gui")
+include("jadx-compose-gui")
 
 include("jadx-plugins-tools")
 

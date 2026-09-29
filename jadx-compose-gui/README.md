@@ -1,6 +1,6 @@
 # Jadx Compose
 
-An independent Compose Desktop + Jewel frontend for the jadx source tree in the parent directory. Its window chrome, project tree, tabs, split panes, settings controls, banners and icons use JetBrains Jewel. The code reader is Compose, with JetBrains Mono, syntax colors, line numbers, selection/copy, horizontal and vertical scrolling, find-in-file and symbol navigation.
+The Compose Desktop + Jewel GUI module in the jadx repository, alongside `jadx-gui` and `jadx-cli`. Its window chrome, project tree, tabs, split panes, settings controls, banners and icons use JetBrains Jewel. The code reader is Compose, with JetBrains Mono, syntax colors, line numbers, selection/copy, horizontal and vertical scrolling, find-in-file and symbol navigation.
 
 ## Run
 
@@ -9,13 +9,13 @@ Requires **JetBrains Runtime (JBR) 25 SDK**. Jewel's decorated windows require J
 From the repository root:
 
 ```sh
-./gradlew -p jadx-compose-gui run
-./gradlew -p jadx-compose-gui run --args="/absolute/path/application.apk --mapping /absolute/path/mapping.txt"
-./gradlew -p jadx-compose-gui test
-./gradlew -p jadx-compose-gui createDistributable
+./gradlew :jadx-compose-gui:run
+./gradlew :jadx-compose-gui:run --args="/absolute/path/application.apk --mapping /absolute/path/mapping.txt"
+./gradlew :jadx-compose-gui:test
+./gradlew :jadx-compose-gui:createDistributable
 ```
 
-Open `jadx-compose-gui` as the Gradle project in IntelliJ IDEA. The parent jadx checkout is an included build. The original root Gradle project and its CLI/Swing GUI tasks remain unchanged.
+Open the repository root as the Gradle project in IntelliJ IDEA. `jadx-compose-gui`, `jadx-gui`, `jadx-cli` and the core/plugins are subprojects of the same build. Use the root Gradle wrapper; this module has no separate settings or wrapper. The existing CLI/Swing GUI launch and distribution tasks remain available.
 
 Supported inputs: APK, DEX, JAR, CLASS and SMALI. Loading and decompilation run on a dedicated worker. Switching inputs safely disposes the prior session. Failed opens retain the current project. Resources support decoded XML and bounded text preview; binary formats do not have a viewer yet.
 
@@ -37,9 +37,9 @@ Holding Cmd/Ctrl while hovering a resolvable Java symbol shows a blue underlined
 
 ## Build and package boundaries
 
-This directory is **an independent Gradle build inside the fork's Git repository**. It is neither a Git submodule nor a subproject registered by the parent `settings.gradle.kts`. Open this directory in the IDE or use `-p jadx-compose-gui` from the repository root.
+This directory is **a Gradle subproject registered in the root `settings.gradle.kts`**, alongside `jadx-gui`. Dependencies use `project(":jadx-core")` and `project(":jadx-plugins:...")`, so core, input plugins and rename mappings are built directly from the same checkout. No composite build, dependency substitution or published jadx binaries are used.
 
-Its `settings.gradle.kts` uses `includeBuild("..")` with explicit dependency substitution. `jadx-core`, the input plugins and the rename-mappings plugin are compiled from the current parent checkout. The `:local` dependency version is a substitution marker, not a downloaded jadx release. Runtime calls go through the Java API (`JadxDecompiler`, `JavaClass`, resources and mapping plugin); the Compose frontend does not embed the Swing GUI. Building this frontend therefore still requires the parent jadx checkout.
+Plugin and library versions live in the root version catalog. The module uses the repository's jadx version, with a numeric fallback for development native installers. Only this GUI configures JBR 25; the core and existing GUI retain their Java 11 bytecode targets. Runtime calls go through the Java API (`JadxDecompiler`, `JavaClass`, resources and mapping plugin); the Compose frontend does not embed the Swing GUI.
 
 The Kotlin source tree separates responsibilities:
 
@@ -71,9 +71,9 @@ Project search supports classes, methods, fields, Java text, Smali text, and res
 
 ## Upstream updates
 
-All fork additions live under **`jadx-compose-gui/`**. No upstream source, root settings, version catalog, build conventions or existing GUI is patched. Gradle composite dependency substitution resolves `jadx-core` and the input plugins from the current parent checkout, rather than a published jadx release. `DecompilerSession.kt`, `Search.kt` and `R8MappingFile.kt` isolate the jadx integration from the UI. The official rename-mappings plugin is also resolved from the parent checkout.
+Frontend code lives under **`jadx-compose-gui/`**. Root integration is limited to the module registration, the IntelliJ artifact repository and the Compose/Jewel entries in the shared version catalog. Upstream core sources and build conventions are unchanged. `DecompilerSession.kt`, `Search.kt` and `R8MappingFile.kt` isolate the jadx integration from the UI.
 
-This removes the normal overlapping-file source of merge conflicts. It cannot guarantee that future upstream changes will never require compatibility work (API changes, build requirements, or an upstream directory with the same name).
+Keep these small root build changes when merging upstream. Changes to the same settings/catalog entries may require a merge resolution, and jadx API or build changes may require compatibility work; this arrangement cannot guarantee conflict-free updates.
 
 To update after committing/stashing local work:
 
@@ -83,7 +83,7 @@ git remote add upstream https://github.com/skylot/jadx.git
 
 git fetch upstream
 git merge upstream/master
-./gradlew -p jadx-compose-gui test createDistributable
+./gradlew :jadx-compose-gui:test :jadx-compose-gui:createDistributable
 ```
 
 The tests decompile upstream's real DEX fixture and a freshly compiled JAR, verify mapping direction and inline-frame handling, search/source positions, nested package/resource trees, text/binary resources, and code-reader interactions. Run UI checks in a desktop session; screenshots are written under `build/reports/ui/`.
@@ -91,7 +91,7 @@ The tests decompile upstream's real DEX fixture and a freshly compiled JAR, veri
 Optional private release checks accept Onion Store's APK and mapping without copying either into the repository:
 
 ```sh
-./gradlew -p jadx-compose-gui test \
+./gradlew :jadx-compose-gui:test \
   -PtestApk=/absolute/path/app-release.apk \
   -PtestMapping=/absolute/path/mapping.txt
 ```
@@ -100,4 +100,4 @@ These checks import/remove mappings through the menu, validate restored `AdbInst
 
 ## Scope
 
-This is a usable independent frontend, not feature parity with the mature Swing GUI. Debugging, usages/cross-reference navigation, editing/exporting rename mappings, plugin management and image/hex viewers are not implemented. The adapter currently uses jadx's `ResContainer` to decode resource previews; upstream changes there need an adapter update. Very large single classes still use a whole-document Compose text layout.
+This is a usable Compose frontend, not feature parity with the mature Swing GUI. Debugging, usages/cross-reference navigation, editing/exporting rename mappings, plugin management and image/hex viewers are not implemented. The adapter currently uses jadx's `ResContainer` to decode resource previews; upstream changes there need an adapter update. Very large single classes still use a whole-document Compose text layout.
