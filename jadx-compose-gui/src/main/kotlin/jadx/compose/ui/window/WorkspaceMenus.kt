@@ -38,6 +38,13 @@ internal fun WorkspaceMenus(
 			selectableItem(false, AllIconsKeys.Actions.Find, onClick = search, enabled = model.file != null) { Text(prefs.text("Search everywhere…", "全局搜索…")) }
 			selectableItem(false, onClick = find, enabled = model.selected != null) { Text(prefs.text("Find in file…", "在文件中查找…")) }
 		}
+		WorkspaceMenu(prefs.text("Navigate", "导航"), "menu-navigate") {
+			selectableItem(false, AllIconsKeys.Actions.Back, onClick = model::goBack, enabled = model.history.canGoBack && !model.busy) { Text(prefs.text("Back", "后退")) }
+			selectableItem(false, AllIconsKeys.Actions.Forward, onClick = model::goForward, enabled = model.history.canGoForward && !model.busy) { Text(prefs.text("Forward", "前进")) }
+			separator()
+			selectableItem(false, onClick = { model.selected?.let { model.goToDefinition(it, model.caretOffset) } }, enabled = model.selected != null && !model.busy) { Text(prefs.text("Go to Declaration", "跳转到声明")) }
+			selectableItem(false, AllIconsKeys.Actions.Find, onClick = { model.selected?.let { model.findUsages(it, model.caretOffset) } }, enabled = model.selected != null && !model.busy) { Text(prefs.text("Find Usages", "查找用法")) }
+		}
 		WorkspaceMenu(prefs.text("View", "视图"), "menu-view") {
 			selectableItem(projectVisible, onClick = toggleProject) { Text(prefs.text("Project", "项目")) }
 			selectableItem(structureVisible, onClick = toggleStructure) { Text(prefs.text("Structure", "结构")) }

@@ -6,19 +6,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import jadx.compose.decompiler.CodeMode
 
-internal fun findMatches(code: String, query: String): List<Int> {
-	if (query.isEmpty()) return emptyList()
-	return buildList {
-		var from = 0
-		while (from <= code.length - query.length) {
-			val index = code.indexOf(query, from, ignoreCase = true)
-			if (index < 0) break
-			add(index)
-			from = index + query.length
-		}
-	}
-}
-
 /** Lexical coloring only; jadx owns decompilation and source positions. */
 internal fun highlight(code: String, dark: Boolean, mode: CodeMode = CodeMode.JAVA): AnnotatedString {
 	val keyword = if (dark) Color(0xFFCF8E6D) else Color(0xFF0033B3)

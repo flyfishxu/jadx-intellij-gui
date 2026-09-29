@@ -9,7 +9,7 @@ class SyntaxHighlightingTest {
 		val colored = highlight(code, true)
 		assertEquals(code, colored.text)
 		assertEquals(3, colored.spanStyles.size)
-		assertEquals(listOf(0, 3, 9, 13), findMatches("oneONE---one ONE", "one"))
-		assertEquals(emptyList(), findMatches(code, ""))
+		assertEquals(listOf(0, 3, 9, 13), editorFind("oneONE---one ONE", "one", EditorFindOptions()).matches.map { it.start })
+		assertEquals(emptyList(), editorFind(code, "", EditorFindOptions()).matches)
 	}
 }

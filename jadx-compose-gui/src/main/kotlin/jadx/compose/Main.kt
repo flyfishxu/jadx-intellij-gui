@@ -40,7 +40,7 @@ fun main(args: Array<String>) {
 	FlatJetBrainsMonoFont.install()
 	application {
 		val prefs = remember { AppPreferences() }
-		val model = remember { WorkspaceModel() }
+		val model = remember { WorkspaceModel { prefs.autoImportMapping } }
 		DisposableEffect(model) { onDispose { model.close() } }
 		LaunchedEffect(Unit) {
 			args.firstOrNull()?.let { input ->

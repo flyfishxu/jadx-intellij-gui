@@ -58,7 +58,10 @@ internal fun Workspace(
 	CompositionLocalProvider(LocalNavigationModifier provides navigationModifier) {
 		Column(Modifier.fillMaxSize().background(JewelTheme.globalColors.panelBackground).onPreviewKeyEvent { e ->
 			navigationModifier.value = e.isMetaPressed || e.isCtrlPressed
-			if (e.type != KeyEventType.KeyDown || !(e.isCtrlPressed || e.isMetaPressed)) false
+			if (e.type != KeyEventType.KeyDown) false
+			else if ((e.isAltPressed && e.key == Key.DirectionLeft) || ((e.isMetaPressed || e.isCtrlPressed) && e.key == Key.LeftBracket)) { model.goBack(); true }
+			else if ((e.isAltPressed && e.key == Key.DirectionRight) || ((e.isMetaPressed || e.isCtrlPressed) && e.key == Key.RightBracket)) { model.goForward(); true }
+			else if (!(e.isCtrlPressed || e.isMetaPressed)) false
 			else when (e.key) {
 				Key.O -> { open(); true }
 				Key.W -> { model.closeActiveTab(); true }

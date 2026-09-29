@@ -19,6 +19,7 @@ import jadx.compose.preferences.AppPreferences
 import jadx.compose.preferences.Appearance
 import jadx.compose.preferences.Language
 import jadx.compose.ui.model.WorkspaceModel
+import jadx.compose.ui.editor.occurrenceColor
 import java.awt.Frame
 import java.awt.MenuItem
 import java.awt.event.ActionEvent
@@ -60,7 +61,7 @@ class RealApkUiTest {
 				waitUntil(timeoutMillis = 60_000) { !model.busy && model.file != null }
 				onNodeWithTag("menu-file").assertDoesNotExist()
 				runOnIdle {
-					assertEquals(listOf("File", "Search", "View", "Window"), (0 until menuWindow.menuBar.menuCount).map { menuWindow.menuBar.getMenu(it).label })
+					assertEquals(listOf("File", "Search", "Navigate", "View", "Window"), (0 until menuWindow.menuBar.menuCount).map { menuWindow.menuBar.getMenu(it).label })
 					assertFalse(fileMenuItem("Remove Mapping").isEnabled)
 				}
 				invokeFileMenu("Import Mapping…")
@@ -85,6 +86,13 @@ class RealApkUiTest {
 					onNodeWithTag("source-code").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
 					return layouts.single()
 				}
+				val occurrences = java.references.occurrences(assertNotNull(java.references.at(fieldUsage)))
+				assertTrue(occurrences.size >= 2)
+				waitUntil(timeoutMillis = 10_000) {
+					codeLayout().layoutInput.text.spanStyles.count { it.item.background == occurrenceColor(true) } == occurrences.size
+				}
+				File("build/reports/ui").mkdirs()
+				ImageIO.write(onRoot().captureToImage().toAwtImage(), "png", File("build/reports/ui/release-occurrences-dark.png"))
 				val sourceNode = onNodeWithTag("source-code").fetchSemanticsNode()
 				val fieldPoint = codeLayout().getBoundingBox(fieldUsage + 2).center + sourceNode.positionInRoot - sourceNode.boundsInRoot.topLeft
 				onNodeWithTag("source-code").performMultiModalInput {

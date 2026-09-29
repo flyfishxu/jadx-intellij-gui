@@ -22,7 +22,7 @@ class CodeNavigationUiTest {
 			val code = "int result = input;"
 			val document = SourceDocument(ProjectEntry("class:test", "Test.java", "Test", "", EntryKind.CLASS), code, "Java", emptyList())
 			val requests = mutableListOf<Int>()
-			setContent { IntUiTheme { CodeEditor(document, AppPreferences(storage), false, {}, null, { requests += it }, { true }, { _, _ -> }) } }
+			setContent { IntUiTheme { CodeEditor(document, AppPreferences(storage), false, {}, null, { requests += it }, { true }, onCaret = { _, _ -> }) } }
 			val node = onNodeWithTag("source-code")
 			val layouts = mutableListOf<TextLayoutResult>()
 			node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }

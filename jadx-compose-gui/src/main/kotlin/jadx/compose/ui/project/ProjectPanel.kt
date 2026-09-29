@@ -1,7 +1,7 @@
 package jadx.compose.ui.project
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.input.key.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,10 +28,12 @@ import org.jetbrains.jewel.ui.painter.hints.Selected
 
 @Composable
 internal fun ProjectPanel(model: WorkspaceModel, prefs: AppPreferences, filter: String, onFilter: (String) -> Unit, focus: FocusRequester) {
-	val treeState = rememberTreeState()
+	val listState = rememberLazyListState()
+	val treeState = rememberTreeState(lazyListState = listState)
 	var filterValue by remember { mutableStateOf(TextFieldValue(filter)) }
 	LaunchedEffect(filter) { if (filterValue.text != filter) filterValue = TextFieldValue(filter) }
 	val filtered = remember(model.entries, filter) { model.entries.filter { filter.isBlank() || (it.path.contains(filter, ignoreCase = true) || it.id.contains(filter, ignoreCase = true)) } }
+	val directoryDepths = remember(filtered) { filtered.flatMap { it.ancestorKeys().withIndex().map { (depth, id) -> id to depth } }.toMap() }
 	val tree = remember(filtered, prefs.chinese) { projectTree(filtered, prefs.text("Sources", "源代码"), prefs.text("Resources", "资源")) }
 	LaunchedEffect(model.projectVersion, filter) {
 		treeState.openNodes = EntryKind.entries.map { it.name }.toSet() +
@@ -60,21 +62,14 @@ internal fun ProjectPanel(model: WorkspaceModel, prefs: AppPreferences, filter: 
 			}
 		}
 		if (filtered.isEmpty()) Box(Modifier.fillMaxWidth().padding(16.dp)) { Muted(prefs.text("No files", "没有文件")) }
-		LazyTree(tree, Modifier.fillMaxSize().testTag("project-tree").onPreviewKeyEvent {
+		LazyTree(tree, Modifier.fillMaxSize().projectTreeClicks(treeState, listState, directoryDepths) { id -> model.entries.firstOrNull { it.id == id }?.let(model::show) }.testTag("project-tree").onPreviewKeyEvent {
 				if (it.type == KeyEventType.KeyDown && it.key == Key.Enter) {
 					model.entries.firstOrNull { entry -> entry.id in treeState.selectedKeys }?.let(model::show)
 					true
 				} else false
 			}, treeState = treeState,
 			onElementDoubleClick = { it.data.entry?.let(model::show) }) { node ->
-			// Compose's gesture recognizer cancels old double-click timers and honors the platform timeout.
-			Row(Modifier.fillMaxWidth().combinedClickable(
-				onClick = { treeState.selectedKeys = setOf(node.id) },
-				onDoubleClick = {
-					val entry = node.data.entry
-					if (entry != null) model.show(entry) else treeState.toggleNode(node.id)
-				},
-			).semantics { selected = isSelected }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+			Row(Modifier.fillMaxWidth().semantics { selected = isSelected }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
 				val icon = when {
 					node.data.entry?.kind == EntryKind.CLASS -> AllIconsKeys.Nodes.Class
 					node.data.entry != null -> AllIconsKeys.FileTypes.Text

@@ -1,10 +1,14 @@
 package jadx.compose.ui.workspace
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,14 +34,35 @@ internal fun Welcome(model: WorkspaceModel, prefs: AppPreferences, open: () -> U
 				Spacer(Modifier.height(8.dp))
 				Text(prefs.text("Recent files", "最近打开"), fontWeight = FontWeight.SemiBold)
 				prefs.recent.take(5).forEach { path ->
-					Column(Modifier.fillMaxWidth().clickable(enabled = !model.busy) { model.open(File(path), prefs::remember) }.padding(vertical = 5.dp)) {
-						Text(File(path).name)
-						Muted(path)
+					key(path) {
+						RecentFileItem(path, prefs, enabled = !model.busy) { model.open(File(path), prefs::remember) }
 					}
 				}
 			}
 			Spacer(Modifier.height(8.dp))
 			Muted(prefs.text("⌘ / Ctrl O   Open     ·     ⌘ / Ctrl F   Find", "⌘ / Ctrl O   打开     ·     ⌘ / Ctrl F   查找"))
+		}
+	}
+}
+
+@Composable
+private fun RecentFileItem(path: String, prefs: AppPreferences, enabled: Boolean, open: () -> Unit) {
+	val interactions = remember { MutableInteractionSource() }
+	val hovered by interactions.collectIsHoveredAsState()
+	var focused by remember { mutableStateOf(false) }
+	Box(Modifier.fillMaxWidth().hoverable(interactions).onFocusChanged { focused = it.hasFocus }
+		.clickable(enabled = enabled, onClick = open).padding(vertical = 5.dp)) {
+		Column(Modifier.fillMaxWidth().padding(end = 32.dp)) {
+			Text(File(path).name)
+			Muted(path)
+		}
+		if (hovered || focused) {
+			val label = prefs.text("Remove from recent files", "从最近打开中移除")
+			Tooltip({ Text(label) }, Modifier.align(Alignment.TopEnd)) {
+				IconButton({ prefs.removeRecent(path) }, Modifier.size(24.dp)) {
+					Icon(AllIconsKeys.Actions.Close, label, Modifier.size(16.dp))
+				}
+			}
 		}
 	}
 }

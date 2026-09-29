@@ -9,13 +9,14 @@ import jadx.compose.decompiler.SearchProgress
 import jadx.compose.decompiler.SearchRequest
 import jadx.compose.decompiler.SourceDocument
 import jadx.compose.decompiler.search
+import jadx.compose.decompiler.usages
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.*
 
-internal class WorkspaceModel : Closeable {
+internal class WorkspaceModel(private val autoImportMapping: () -> Boolean = { true }) : Closeable {
 	private val executor = Executors.newSingleThreadExecutor { task -> Thread(task, "jadx-session").apply { isDaemon = true } }
 	private val worker = executor.asCoroutineDispatcher()
 	private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -24,6 +25,25 @@ internal class WorkspaceModel : Closeable {
 	private var searchCancellation = AtomicBoolean(false)
 	private var searchJob: Job? = null
 	private var searchGeneration = 0
+	private var usageCancellation = AtomicBoolean(false)
+	private var usageJob: Job? = null
+	private var usageGeneration = 0
+	private val caretPositions = mutableMapOf<String, Int>()
+	val history = NavigationHistory()
+	var editorFocusRequest by mutableIntStateOf(0)
+		private set
+	var usagesVisible by mutableStateOf(false)
+		private set
+	var usagesBusy by mutableStateOf(false)
+		private set
+	var usagesStopped by mutableStateOf(false)
+		private set
+	var usagesTitle by mutableStateOf("")
+		private set
+	var usagesProgress by mutableStateOf(SearchProgress())
+		private set
+	var usagesError by mutableStateOf<String?>(null)
+		private set
 	var file by mutableStateOf<File?>(null)
 		private set
 	var mapping by mutableStateOf<File?>(null)
@@ -72,13 +92,14 @@ internal class WorkspaceModel : Closeable {
 		if (settingsSelected) closeSettings() else selectedId?.let(::closeTab)
 	}
 
-	fun open(input: File, onSuccess: (File) -> Unit = {}) = reload(input, null, false, onSuccess)
+	fun open(input: File, onSuccess: (File) -> Unit = {}) = reload(input, null, false, onSuccess, discoverMapping = autoImportMapping())
 	fun openWithMapping(input: File, mapping: File, onSuccess: (File) -> Unit = {}) = reload(input, mapping, false, onSuccess)
 	fun importMapping(mapping: File?) { file?.let { reload(it, mapping, true) } }
 
-	private fun reload(input: File, mappingFile: File?, preserveTabs: Boolean, onSuccess: (File) -> Unit = {}) {
+	private fun reload(input: File, mappingFile: File?, preserveTabs: Boolean, onSuccess: (File) -> Unit = {}, discoverMapping: Boolean = false) {
 		if (busy) return
 		cancelSearch()
+		cancelUsages()
 		busy = true
 		error = null
 		requested = null
@@ -87,24 +108,42 @@ internal class WorkspaceModel : Closeable {
 		scope.launch {
 			try {
 				val loaded = withContext(worker) {
-					val next = DecompilerSession.open(input, mappingFile)
+					var selectedMapping = mappingFile ?: if (discoverMapping && input.extension.equals("apk", ignoreCase = true)) {
+						File(input.absoluteFile.parentFile, "mapping.txt").takeIf { it.isFile }
+					} else null
+					var mappingError: String? = null
+					val next = try {
+						DecompilerSession.open(input, selectedMapping)
+					} catch (cancel: CancellationException) { throw cancel }
+					catch (failure: Exception) {
+						// An unrelated/broken adjacent mapping must not prevent opening the APK.
+						if (!discoverMapping || selectedMapping == null) throw failure
+						mappingError = "Could not automatically import ${selectedMapping.absolutePath}: ${failure.message}. Opened APK without mapping."
+						selectedMapping = null
+						DecompilerSession.open(input)
+					}
 					try {
 						val byId = next.entries.associateBy { it.id }
 						val restored = oldTabs.mapNotNull { doc -> byId[doc.entry.id]?.let { next.read(it, doc.mode) } }
-						val result = Triple(next.entries, restored, next.mappingMatches)
+						val result = LoadedProject(next.entries, restored, next.mappingMatches, selectedMapping, mappingError)
 						session?.close()
 						session = next
 						result
 					} catch (failure: Throwable) { next.close(); throw failure }
 				}
-				entries = loaded.first
+				entries = loaded.entries
 				requested = null
 				tabs.clear()
-				tabs.addAll(loaded.second)
+				tabs.addAll(loaded.tabs)
 				selectedId = tabs.firstOrNull { it.entry.id == oldSelection }?.entry?.id ?: tabs.firstOrNull()?.entry?.id
 				file = input
-				mapping = mappingFile
-				mappingMatches = loaded.third
+				mapping = loaded.mapping
+				mappingMatches = loaded.mappingMatches
+				error = loaded.mappingError
+				history.clear()
+				caretPositions.clear()
+				usagesVisible = false
+				usagesProgress = SearchProgress()
 				projectVersion++
 				jump = null
 				searchProgress = SearchProgress()
@@ -117,11 +156,11 @@ internal class WorkspaceModel : Closeable {
 		}
 	}
 
-	fun show(entry: ProjectEntry) = openDocument(OpenRequest(entry, tabs.firstOrNull { it.entry.id == entry.id }?.mode ?: CodeMode.JAVA))
-	fun showHit(hit: SearchHit) = openDocument(OpenRequest(hit.entry, hit.mode, hit))
+	fun show(entry: ProjectEntry) = openDocument(OpenRequest(entry, tabs.firstOrNull { it.entry.id == entry.id }?.mode ?: CodeMode.JAVA, origin = currentLocation()))
+	fun showHit(hit: SearchHit) = openDocument(OpenRequest(hit.entry, hit.mode, hit, origin = currentLocation()))
 	fun setMode(mode: CodeMode) { selected?.let { openDocument(OpenRequest(it.entry, mode)) } }
 	fun goToDefinition(document: SourceDocument, offset: Int) =
-		openDocument(OpenRequest(document.entry, document.mode, definition = document to offset))
+		openDocument(OpenRequest(document.entry, document.mode, definition = document to offset, origin = CodeLocation(document.entry, document.mode, offset)))
 
 	suspend fun canNavigate(document: SourceDocument, offset: Int): Boolean {
 		if (selected != document) return false
@@ -139,6 +178,7 @@ internal class WorkspaceModel : Closeable {
 		if (existing != null && request.definition == null) { selectDocument(existing, request); return }
 		if (busy) return
 		cancelSearch()
+		cancelUsages()
 		busy = true
 		error = null
 		scope.launch {
@@ -157,8 +197,7 @@ internal class WorkspaceModel : Closeable {
 				val index = tabs.indexOfFirst { it.entry.id == document.entry.id }
 				if (index < 0) tabs.add(document) else tabs[index] = document
 				if (requested == request) {
-					selectDocument(document, request)
-					if (result.offset >= 0) jumpTo(result.offset)
+					selectDocument(document, request, result.offset.takeIf { it >= 0 })
 				}
 			} catch (cancel: CancellationException) {
 				throw cancel
@@ -171,19 +210,69 @@ internal class WorkspaceModel : Closeable {
 		}
 	}
 
-	private fun selectDocument(document: SourceDocument, request: OpenRequest) {
+	private fun selectDocument(document: SourceDocument, request: OpenRequest, definitionOffset: Int? = null) {
+		val hit = request.hit
+		val offset = definitionOffset ?: request.location?.offset ?: hit?.let {
+			if (it.symbolKey == null) it.offset else document.symbols.firstOrNull { symbol -> symbol.key == it.symbolKey }?.offset
+		}
+		val destination = offset ?: caretPositions[document.viewKey] ?: 0
+		if (request.recordHistory) history.record(request.origin, CodeLocation(document.entry, document.mode, destination))
 		settingsSelected = false
 		selectedId = document.entry.id
-		request.hit?.let { hit ->
-			val offset = if (hit.symbolKey == null) hit.offset else document.symbols.firstOrNull { it.key == hit.symbolKey }?.offset
-			if (offset == null) error = "The symbol has no standalone declaration in the decompiled source (it may have been inlined)."
-			else jumpTo(offset)
+		caretOffset = destination
+		if (hit != null && offset == null) error = "The symbol has no standalone declaration in the decompiled source (it may have been inlined)."
+		if (offset != null) applyJump(offset)
+	}
+
+	fun updateCaret(document: SourceDocument, label: String, offset: Int) {
+		caretPositions[document.viewKey] = offset
+		if (selected?.viewKey == document.viewKey) { caret = label; caretOffset = offset }
+	}
+
+	private fun currentLocation() = selected?.let { CodeLocation(it.entry, it.mode, caretOffset) }
+	fun goBack() { if (!busy) history.back(currentLocation())?.let(::restoreLocation) }
+	fun goForward() { if (!busy) history.forward(currentLocation())?.let(::restoreLocation) }
+	private fun restoreLocation(location: CodeLocation) = openDocument(OpenRequest(location.entry, location.mode, location = location, recordHistory = false))
+
+	fun findUsages(document: SourceDocument, offset: Int) {
+		if (busy || selected != document) return
+		val reference = document.references.atCaret(offset) ?: return
+		cancelSearch()
+		cancelUsages()
+		usagesVisible = true
+		usagesBusy = true
+		usagesStopped = false
+		usagesTitle = reference.name
+		usagesError = null
+		usagesProgress = SearchProgress()
+		val generation = usageGeneration
+		val cancellation = AtomicBoolean(false).also { usageCancellation = it }
+		usageJob = scope.launch {
+			try {
+				withContext(worker) {
+					requireNotNull(session).usages(document, reference.start, cancellation::get) { update ->
+						scope.launch { if (generation == usageGeneration) usagesProgress = update }
+					}
+				}
+			} catch (cancel: CancellationException) { throw cancel }
+			catch (failure: Exception) { if (generation == usageGeneration) usagesError = failure.message }
+			finally { if (generation == usageGeneration) usagesBusy = false }
 		}
 	}
+
+	fun cancelUsages() {
+		if (usagesBusy) usagesStopped = true
+		usageCancellation.set(true)
+		usageJob?.cancel()
+		usageGeneration++
+		usagesBusy = false
+	}
+	fun closeUsages() { cancelUsages(); usagesVisible = false; editorFocusRequest++ }
 
 	fun search(request: SearchRequest) {
 		if (file == null || busy) return
 		cancelSearch()
+		cancelUsages()
 		searchError = null
 		lastSearchRequest = request
 		searchProgress = SearchProgress()
@@ -222,10 +311,16 @@ internal class WorkspaceModel : Closeable {
 			if (selectedId == null && settingsOpen) settingsSelected = true
 		}
 	}
-	fun jumpTo(offset: Int) { selected?.let { caretOffset = offset; jump = NavigationTarget(it.viewKey, offset, (jump?.serial ?: 0) + 1) } }
+	fun jumpTo(offset: Int) {
+		selected?.let { history.record(currentLocation(), CodeLocation(it.entry, it.mode, offset)); applyJump(offset) }
+	}
+	private fun applyJump(offset: Int) {
+		selected?.let { caretOffset = offset; caretPositions[it.viewKey] = offset; jump = NavigationTarget(it.viewKey, offset, (jump?.serial ?: 0) + 1) }
+	}
 
 	override fun close() {
 		cancelSearch()
+		cancelUsages()
 		scope.cancel()
 		// Queue disposal behind blocking jadx work; never close a live session on the EDT.
 		executor.execute { session?.close(); session = null }
@@ -234,5 +329,14 @@ internal class WorkspaceModel : Closeable {
 }
 
 private data class OpenRequest(val entry: ProjectEntry, val mode: CodeMode, val hit: SearchHit? = null,
-	val definition: Pair<SourceDocument, Int>? = null)
+	val definition: Pair<SourceDocument, Int>? = null, val origin: CodeLocation? = null,
+	val location: CodeLocation? = null, val recordHistory: Boolean = true)
 internal data class NavigationTarget(val viewKey: String, val offset: Int, val serial: Int)
+
+private data class LoadedProject(
+	val entries: List<ProjectEntry>,
+	val tabs: List<SourceDocument>,
+	val mappingMatches: Int,
+	val mapping: File?,
+	val mappingError: String?,
+)

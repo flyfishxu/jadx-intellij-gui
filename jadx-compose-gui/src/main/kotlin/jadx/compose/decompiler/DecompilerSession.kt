@@ -28,17 +28,17 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 		return allClasses.count { tree.getClass(it.rawName.replace('.', '/')) != null }
 	}
 
-	fun definition(document: SourceDocument, offset: Int): Declaration? {
+	internal fun nodeAt(document: SourceDocument, offset: Int): jadx.api.JavaNode? {
 		if (document.mode != CodeMode.JAVA) return null
 		val cls = classes[document.entry.id] ?: return null
-		val code = document.code
-		if (offset !in code.indices || !Character.isJavaIdentifierPart(code[offset])) return null
-		var start = offset
-		while (start > 0 && Character.isJavaIdentifierPart(code[start - 1])) start--
-		val node = jadx.getJavaNodeAtPosition(cls.codeInfo, start) ?: return null
+		val reference = document.references.atCaret(offset) ?: return null
+		return jadx.getJavaNodeAtPosition(cls.codeInfo, reference.start)
+	}
+
+	fun definition(document: SourceDocument, offset: Int): Declaration? {
+		val node = nodeAt(document, offset) ?: return null
 		val parent = node.topParentClass ?: return null
 		val target = entries.firstOrNull { it.id == "class:${parent.rawName}" } ?: return null
-		// Reading the target populates declaration offsets, including inner classes and overloads.
 		val targetDocument = read(target)
 		val position = node.defPos
 		if (position !in targetDocument.code.indices || position == 0) return null
@@ -52,7 +52,8 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 				val code = cls.smali
 				return SourceDocument(entry, code, "Smali", smaliSymbols(code), mode = mode)
 			}
-			val code = cls.code
+			val info = cls.codeInfo
+			val code = info.codeStr
 			val symbols = buildList {
 				fun collect(current: JavaClass) {
 					add(Symbol(current.name, current.defPos, SymbolKind.CLASS, "c:${current.rawName}"))
@@ -65,7 +66,7 @@ internal class DecompilerSession private constructor(private val jadx: JadxDecom
 				}
 				collect(cls)
 			}
-			return SourceDocument(entry, code, "Java", symbols, jadx.errorsCount, jadx.warnsCount)
+			return SourceDocument(entry, code, "Java", symbols, jadx.errorsCount, jadx.warnsCount, references = codeReferences(jadx, info))
 		}
 		val resource = requireNotNull(resources[entry.id]) { "Resource no longer available" }
 		return SourceDocument(entry, readResource(resource), resource.type.name, emptyList(), jadx.errorsCount, jadx.warnsCount)

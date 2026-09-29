@@ -24,6 +24,10 @@ The project tree expands each package segment and resource directory separately.
 | Shortcut | Action |
 | --- | --- |
 | Cmd/Ctrl+click / Cmd/Ctrl+B | Go to declaration in Java source |
+| Alt+F7 | Find usages of the symbol at the caret |
+| Cmd/Ctrl+[ / Cmd/Ctrl+] or Alt+Left / Alt+Right | Navigate back / forward |
+| F3 / Shift+F3 | Next / previous find-in-file match |
+| Escape in the editor | Clear occurrence highlights |
 | Enter in project tree | Open selected file |
 | Cmd/Ctrl+O | Open file |
 | Cmd/Ctrl+W | Close active tab/settings |
@@ -34,6 +38,14 @@ The project tree expands each package segment and resource directory separately.
 | Cmd/Ctrl+, | Settings |
 
 Holding Cmd/Ctrl while hovering a resolvable Java symbol shows a blue underlined link with a hand cursor. Pressing or releasing the modifier updates the link even with a stationary mouse or focus in another workspace control. Hover resolution is delayed briefly, cached per document and performed on the session worker; it never opens a tab. Java declaration navigation uses jadx code metadata, including mapped names, overloaded methods, fields, inner classes and local variables. Targets absent from the input (such as external libraries or optimized-away declarations) cannot be opened. Smali declaration navigation is not implemented. On macOS/JBR, Force Click stage 2 is connected to the same action via the optional Apple pressure-event bridge; physical trackpad behavior still needs hardware verification.
+
+## Editor interactions
+
+Placing the caret in a Java symbol or selecting its identifier highlights its declaration and references in the current document. The index comes from jadx code metadata, so different locals with the same name, overloaded methods, comments and string literals stay distinct. Fields and methods receive semantic colors; matching brackets and the current line have separate highlights. A narrow overview stripe marks off-screen references and search results. Both light and dark themes are supported.
+
+The Jewel right-click menu retains Copy/Select All and adds Go to Declaration, Find Usages, Copy Reference, Back and Forward. Find Usages opens a resizable bottom tool window, groups results by class, and uses jadx's usage graph including method overrides and constructor calls. Single-click selects the whole result row; double-click or Enter opens the exact reference. Searches are cancellable, report partial/skipped results, and stop at 1,000 results. Closing the panel restores editor focus; opening/closing tool windows preserves code selection and scroll. These semantic actions apply to Java source; Smali remains a separate code viewer.
+
+Navigation history records declaration, usage, search-result and Structure jumps, including the originating file, mode and offset. History is bounded to 100 locations and resets when the input/mapping changes. Find-in-file highlights all matches and supports case sensitivity, whole words and regular expressions using Jewel's official search icons. Invalid expressions are shown inline, and displayed matches are capped at 10,000. The code stays read-only.
 
 ## Build and package boundaries
 
@@ -62,6 +74,8 @@ jadx/compose/
 UI packages depend on immutable source documents and workspace state; jadx API calls stay in `decompiler`. Tests mirror the relevant packages, with private artifact configuration isolated in `fixtures`.
 
 ## Mapping and search
+
+Opening an APK automatically imports `mapping.txt` from the same directory when present. This is enabled by default and can be disabled in **Settings → Decompilation**; the choice persists and applies to subsequent opens from the file dialog, recent files and command line. An explicit `--mapping` takes precedence. Other input formats do not trigger discovery. Removing a mapping does not immediately import it again; an invalid adjacent mapping reports an error and opens the APK without it.
 
 Choose **File → Import mapping…** for an R8 / ProGuard mapping. Importing or removing a mapping reloads the session, preserves open tabs by their original class IDs, and retains the old project if the operation fails. Input APKs and mapping files remain read-only.
 
@@ -100,4 +114,4 @@ These checks import/remove mappings through the menu, validate restored `AdbInst
 
 ## Scope
 
-This is a usable Compose frontend, not feature parity with the mature Swing GUI. Debugging, usages/cross-reference navigation, editing/exporting rename mappings, plugin management and image/hex viewers are not implemented. The adapter currently uses jadx's `ResContainer` to decode resource previews; upstream changes there need an adapter update. Very large single classes still use a whole-document Compose text layout.
+This is a usable Compose frontend, not feature parity with the mature Swing GUI. Code folding, editing/exporting rename mappings, persistent comments/bookmarks, instruction-level Java/Smali synchronization, debugging, plugin management and image/hex viewers are not implemented. The adapter currently uses jadx's `ResContainer` to decode resource previews; upstream changes there need an adapter update. Very large single classes still use a whole-document Compose text layout.

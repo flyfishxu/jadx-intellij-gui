@@ -2,6 +2,7 @@ package jadx.compose.ui.editor
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -12,10 +13,12 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.*
@@ -25,41 +28,69 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import jadx.compose.decompiler.SourceDocument
 import jadx.compose.preferences.AppPreferences
-import jadx.compose.ui.components.Muted
 import jadx.compose.ui.components.Rule
-import jadx.compose.ui.components.ToolAction
 import jadx.compose.ui.model.NavigationTarget
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import org.jetbrains.jewel.foundation.theme.JewelTheme
 import org.jetbrains.jewel.ui.component.HorizontalScrollbar
-import org.jetbrains.jewel.ui.component.Text
-import org.jetbrains.jewel.ui.component.TextField
 import org.jetbrains.jewel.ui.component.VerticalScrollbar
-import org.jetbrains.jewel.ui.icons.AllIconsKeys
 
 @Composable
 internal fun CodeEditor(document: SourceDocument, prefs: AppPreferences, find: Boolean, closeFind: () -> Unit,
-	jump: NavigationTarget?, onNavigate: (Int) -> Unit, canNavigate: suspend (Int) -> Boolean = { false }, onCaret: (String, Int) -> Unit) {
+	jump: NavigationTarget?, onNavigate: (Int) -> Unit, canNavigate: suspend (Int) -> Boolean = { false }, onFindUsages: (Int) -> Unit = {}, focusRequest: Int = 0, back: (() -> Unit)? = null, forward: (() -> Unit)? = null,
+	onCaret: (String, Int) -> Unit) {
 	val dark = JewelTheme.isDark
 	var highlighted by remember(document) { mutableStateOf(AnnotatedString(document.code)) }
-	LaunchedEffect(document, dark) { highlighted = withContext(Dispatchers.Default) { highlight(document.code, dark, document.mode) } }
+	LaunchedEffect(document, dark) { highlighted = withContext(Dispatchers.Default) { decorateCode(highlight(document.code, dark, document.mode), document.references.references, emptyList(), emptyList(), emptyList(), dark) } }
 	var value by rememberSaveable(document.viewKey, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(document.code)) }
-	var queryValue by remember { mutableStateOf(TextFieldValue()) }
+	var queryValue by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
 	val query = queryValue.text
-	val matches = remember(query, document.code) { findMatches(document.code, query) }
-	var matchIndex by remember(query) { mutableIntStateOf(-1) }
+	var findOptions by rememberSaveable { mutableStateOf(Triple(false, false, false)) }
+	var findResult by remember(document) { mutableStateOf(EditorFindResult()) }
+	LaunchedEffect(query, findOptions, document) {
+		findResult = withContext(Dispatchers.Default) { editorFind(document.code, query, EditorFindOptions(findOptions.first, findOptions.second, findOptions.third)) }
+	}
+	val matches = findResult.matches
+	var matchIndex by remember(query, findOptions) { mutableIntStateOf(-1) }
 	var appliedJumpSerial by rememberSaveable(document.viewKey) { mutableIntStateOf(-1) }
 	val vertical = rememberScrollState()
 	val horizontal = rememberScrollState()
+	var revealKeyboardCaret by remember { mutableStateOf(false) }
 	val layout = remember { AtomicReference<TextLayoutResult?>() }
 	val links = rememberCodeLinks(document, vertical.value to horizontal.value, canNavigate, onNavigate)
-	val displayedCode = linkedCode(highlighted, links.activeRange)
+	var dismissedOccurrences by remember(document) { mutableStateOf<TextRange?>(null) }
+	val reference = remember(document, value.selection) {
+		val range = value.selection
+		val candidate = document.references.at(range.min)
+			?: if (range.collapsed) document.references.at(range.min - 1)?.takeIf { it.end == range.min } else null
+		candidate?.takeIf { range.collapsed || (range.min == it.start && range.max == it.end) }
+	}
+	val occurrences = remember(document, reference, dismissedOccurrences, value.selection) {
+		if (reference != null && dismissedOccurrences != value.selection) document.references.occurrences(reference) else emptyList()
+	}
+	var pairs by remember(document) { mutableStateOf(emptyMap<Int, Int>()) }
+	LaunchedEffect(document) { pairs = withContext(Dispatchers.Default) { if (document.language == "Java") bracketPairs(document.code) else emptyMap() } }
+	val brackets = remember(pairs, value.selection) {
+		if (!value.selection.collapsed) emptyList() else {
+			val offset = value.selection.end.let { if (it in pairs) it else it - 1 }
+			pairs[offset]?.let { listOf(offset, it) }.orEmpty()
+		}
+	}
+	val decorations = remember(highlighted, occurrences, matches, find, brackets, dark) {
+		decorateCode(highlighted, emptyList(), occurrences, if (find) matches else emptyList(), brackets, dark)
+	}
+	val displayedCode = linkedCode(decorations, links.activeRange)
 	val lineStarts = remember(document.code) {
 		buildList { add(0); document.code.forEachIndexed { i, c -> if (c == '\n') add(i + 1) } }
 	}
 	val focus = remember { FocusRequester() }
+	var editorFocused by remember { mutableStateOf(false) }
+	val selectionScope = rememberCoroutineScope()
+	var selectionChange by remember { mutableIntStateOf(0) }
 	val searchFocus = remember { FocusRequester() }
 	val fontSize = prefs.fontSize.sp
 	val lineHeight = (prefs.fontSize * 1.6).sp
@@ -68,8 +99,11 @@ internal fun CodeEditor(document: SourceDocument, prefs: AppPreferences, find: B
 	val gutterColor = if (dark) Color(0xFF6F737A) else Color(0xFF8C8C8C)
 	val textMeasurer = rememberTextMeasurer()
 	val numberWidth = textMeasurer.measure(lineStarts.size.toString(), style).size.width
+	val editorPaddingY = with(LocalDensity.current) { 12.dp.toPx() }
+	val editorPaddingX = with(LocalDensity.current) { 8.dp.toPx() }
 	val gutterWidth = with(LocalDensity.current) { numberWidth.toDp() } + 16.dp
 	LaunchedEffect(find) { if (find) searchFocus.requestFocus() }
+	LaunchedEffect(focusRequest) { if (focusRequest > 0) focus.requestFocus() }
 	LaunchedEffect(jump) {
 		if (jump != null && jump.viewKey == document.viewKey && appliedJumpSerial != jump.serial) {
 			appliedJumpSerial = jump.serial
@@ -85,37 +119,42 @@ internal fun CodeEditor(document: SourceDocument, prefs: AppPreferences, find: B
 		}
 	}
 	LaunchedEffect(value.selection) {
+		if (dismissedOccurrences != value.selection) dismissedOccurrences = null
 		val offset = value.selection.end.coerceIn(0, document.code.length)
 		val result = lineStarts.binarySearch(offset)
 		val line = if (result >= 0) result else -result - 2
 		onCaret("${line + 1}:${offset - lineStarts[line] + 1}", offset)
+		if (revealKeyboardCaret) {
+			revealKeyboardCaret = false
+			layout.get()?.getCursorRect(offset)?.let { rect ->
+				vertical.reveal(rect.top + editorPaddingY, rect.bottom + editorPaddingY)
+				horizontal.reveal(rect.left + editorPaddingX, rect.right + editorPaddingX)
+			}
+		}
 	}
 	suspend fun selectMatch(index: Int) {
 		if (matches.isEmpty()) return
 		matchIndex = Math.floorMod(index, matches.size)
-		val offset = matches[matchIndex]
-		value = value.copy(selection = TextRange(offset, offset + query.length))
-		layout.get()?.let { vertical.scrollTo((it.getLineTop(it.getLineForOffset(offset)) - 60).toInt().coerceAtLeast(0)) }
+		val range = matches[matchIndex]
+		value = value.copy(selection = range)
+		layout.get()?.let {
+			vertical.scrollTo((it.getLineTop(it.getLineForOffset(range.start)) - 60).toInt().coerceAtLeast(0))
+			horizontal.scrollTo((it.getCursorRect(range.start).left - 40).toInt().coerceAtLeast(0))
+		}
 	}
 	var matchRequest by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 	LaunchedEffect(matchRequest) { matchRequest?.let { selectMatch(it.first) } }
 	fun nextMatch(delta: Int) { matchRequest = (if (matchIndex < 0 && delta < 0) matches.lastIndex else matchIndex + delta) to ((matchRequest?.second ?: 0) + 1) }
-	Column(Modifier.fillMaxSize()) {
+	Column(Modifier.fillMaxSize().onPreviewKeyEvent {
+		if (it.type != KeyEventType.KeyDown) false
+		else when {
+			it.key == Key.F3 -> { nextMatch(if (it.isShiftPressed) -1 else 1); true }
+			else -> false
+		}
+	}) {
 		if (find) {
-			Row(Modifier.fillMaxWidth().height(40.dp).background(JewelTheme.globalColors.panelBackground).padding(horizontal = 8.dp),
-				verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-				TextField(queryValue, { queryValue = it }, Modifier.weight(1f).focusRequester(searchFocus).onPreviewKeyEvent {
-					when {
-						it.type == KeyEventType.KeyDown && it.key == Key.Enter -> { nextMatch(if (it.isShiftPressed) -1 else 1); true }
-						it.type == KeyEventType.KeyDown && it.key == Key.Escape -> { closeFind(); focus.requestFocus(); true }
-						else -> false
-					}
-				}, placeholder = { Text(prefs.text("Find in file", "在文件中查找")) })
-				Muted(if (matches.isEmpty()) "0" else "${matchIndex + 1} / ${matches.size}")
-				ToolAction(prefs.text("Previous match", "上一个"), AllIconsKeys.Actions.PreviousOccurence, matches.isNotEmpty()) { nextMatch(-1) }
-				ToolAction(prefs.text("Next match", "下一个"), AllIconsKeys.Actions.NextOccurence, matches.isNotEmpty()) { nextMatch(1) }
-				ToolAction(prefs.text("Close find", "关闭查找"), AllIconsKeys.Actions.Close, onClick = closeFind)
-			}
+			FindBar(prefs, queryValue, { queryValue = it }, findOptions, { findOptions = it }, findResult, matchIndex,
+				searchFocus, ::nextMatch, { closeFind(); focus.requestFocus() })
 			Rule()
 		}
 		Box(Modifier.weight(1f).fillMaxWidth().clipToBounds().drawBehind {
@@ -124,37 +163,73 @@ internal fun CodeEditor(document: SourceDocument, prefs: AppPreferences, find: B
 			val top = measured.getLineTop(line) - vertical.value + 12.dp.toPx()
 			drawRect(if (dark) Color(0xFF26282E) else Color(0xFFF0F3FA),
 				topLeft = Offset(gutterWidth.toPx(), top), size = Size(size.width - gutterWidth.toPx(), measured.getLineBottom(line) - measured.getLineTop(line)))
+		}.pointerInput(document.viewKey) {
+			awaitPointerEventScope {
+				while (true) {
+					if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) revealKeyboardCaret = false
+				}
+			}
 		}.then(links.viewportModifier)) {
-			Row(Modifier.fillMaxSize().padding(bottom = 12.dp, end = 12.dp)) {
+			Row(Modifier.fillMaxSize().padding(bottom = 12.dp, end = 17.dp)) {
 				Canvas(Modifier.width(gutterWidth).fillMaxHeight().background(if (dark) Color(0xFF1E1F22) else Color(0xFFF7F8FA))) {
 					val measured = layout.get() ?: return@Canvas
 					val padding = 12.dp.toPx()
 					val first = measured.getLineForVerticalPosition(vertical.value.toFloat()).coerceAtLeast(0)
 					val last = measured.getLineForVerticalPosition(vertical.value + size.height).coerceAtMost(measured.lineCount - 1)
 					for (line in first..last) {
-						val number = textMeasurer.measure((line + 1).toString(), style.copy(color = gutterColor))
+						val number = textMeasurer.measure((line + 1).toString(), style.copy(color = if (line == measured.getLineForOffset(value.selection.end)) { if (dark) Color(0xFFDFE1E5) else Color(0xFF2F65CA) } else gutterColor))
 						drawText(number, topLeft = Offset(size.width - number.size.width - 8.dp.toPx(), measured.getLineTop(line) - vertical.value + padding))
 					}
 				}
-				Box(Modifier.weight(1f).fillMaxHeight().verticalScroll(vertical).horizontalScroll(horizontal).padding(start = 8.dp, top = 12.dp, end = 12.dp, bottom = 12.dp)) {
-					BasicTextField(
-						value = value.copy(annotatedString = displayedCode),
-						onValueChange = { value = it.copy(text = document.code) },
-						readOnly = true,
-						textStyle = style,
-						cursorBrush = SolidColor(if (dark) Color(0xFFCED0D6) else Color.Black),
-						onTextLayout = { layout.set(it); links.layout = it },
-						modifier = Modifier.defaultMinSize(minWidth = 400.dp).focusRequester(focus).testTag("source-code")
-							.onPreviewKeyEvent {
-								if (it.type == KeyEventType.KeyDown && it.key == Key.B && (it.isMetaPressed || it.isCtrlPressed)) {
-									onNavigate(value.selection.end); true
-								} else false
-							}
-							.then(links.textModifier),
-					)
+				CompositionLocalProvider(LocalBringIntoViewSpec provides EditorBringIntoViewSpec) {
+					Box(Modifier.weight(1f).fillMaxHeight().testTag("editor-scroll").verticalScroll(vertical).horizontalScroll(horizontal).padding(start = 8.dp, top = 12.dp, end = 12.dp, bottom = 12.dp)) {
+						EditorContextMenu(prefs, reference, { reference?.let { onNavigate(it.start) } }, { reference?.let { onFindUsages(it.start) } }, back, forward) {
+							BasicTextField(
+								value = value.copy(annotatedString = displayedCode),
+								onValueChange = {
+									val before = value.selection
+									val next = it.copy(text = document.code)
+									val change = ++selectionChange
+									if (!before.collapsed && next.selection.collapsed) {
+										// Internal blur callbacks run before our focus observer. Wait for that event
+										// to finish, then accept an actual click/key collapse only while still focused.
+										selectionScope.launch {
+											yield()
+											if (editorFocused && change == selectionChange && value.selection == before) value = next
+										}
+									} else value = next
+								},
+								readOnly = true,
+								textStyle = style,
+								cursorBrush = SolidColor(if (dark) Color(0xFFCED0D6) else Color.Black),
+								onTextLayout = { layout.set(it); links.layout = it },
+								modifier = Modifier.defaultMinSize(minWidth = 400.dp).focusRequester(focus).onFocusChanged { editorFocused = it.isFocused }.testTag("source-code")
+									.onPreviewKeyEvent {
+										if (it.type != KeyEventType.KeyDown) false
+										else when {
+											it.key == Key.B && (it.isMetaPressed || it.isCtrlPressed) -> { onNavigate(reference?.start ?: value.selection.end); true }
+											it.key == Key.F7 && it.isAltPressed -> { reference?.let { onFindUsages(it.start) }; true }
+											it.key in caretNavigationKeys -> { revealKeyboardCaret = true; false }
+											it.key == Key.Escape -> { dismissedOccurrences = value.selection; true }
+											else -> false
+										}
+									}
+									.then(links.textModifier),
+							)
+						}
+					}
 				}
 			}
-			VerticalScrollbar(vertical, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(bottom = 12.dp))
+			// Overview marks remain visible even for references outside the viewport.
+			Canvas(Modifier.align(Alignment.CenterEnd).width(4.dp).fillMaxHeight().padding(bottom = 12.dp)) {
+				val measured = layout.get() ?: return@Canvas
+				val offsets = if (find && query.isNotEmpty()) matches.map { it.start } else occurrences.map { it.start }
+				offsets.map { measured.getLineForOffset(it) }.distinct().forEach { line ->
+					val y = line.toFloat() / measured.lineCount.coerceAtLeast(1) * (size.height - 3.dp.toPx())
+					drawRect(if (find && query.isNotEmpty()) Color(0xFFB89B55) else Color(0xFF6B8DBB), Offset(0f, y), Size(size.width, 3.dp.toPx()))
+				}
+			}
+			VerticalScrollbar(vertical, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(bottom = 12.dp, end = 5.dp))
 			HorizontalScrollbar(horizontal, Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = gutterWidth, end = 12.dp))
 		}
 	}

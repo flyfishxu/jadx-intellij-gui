@@ -14,6 +14,7 @@ import jadx.compose.ui.components.Rule
 import jadx.compose.ui.components.editorBackground
 import jadx.compose.ui.model.WorkspaceModel
 import jadx.compose.ui.settings.SettingsPage
+import jadx.compose.ui.search.UsagesPanel
 import jadx.compose.ui.editor.CodeEditor
 import jadx.compose.ui.editor.StructurePanel
 import org.jetbrains.jewel.foundation.theme.JewelTheme
@@ -25,7 +26,7 @@ import org.jetbrains.jewel.ui.theme.editorTabStyle
 internal fun EditorArea(model: WorkspaceModel, prefs: AppPreferences, structure: Boolean, find: Boolean, closeFind: () -> Unit, open: () -> Unit) {
 	val editorStates = key(model.projectVersion) { rememberSaveableStateHolder() }
 	val document = model.selected
-	val editor: @Composable () -> Unit = {
+	val currentEditor by rememberUpdatedState<@Composable () -> Unit> {
 		Column(Modifier.fillMaxSize().testTag("editor-pane").background(editorBackground)) {
 			val tabData = buildList {
 				model.tabs.forEach { doc ->
@@ -68,15 +69,31 @@ internal fun EditorArea(model: WorkspaceModel, prefs: AppPreferences, structure:
 			else if (document == null) Welcome(model, prefs, open)
 			else {
 				Box(Modifier.weight(1f)) {
-					editorStates.SaveableStateProvider(document.viewKey) { CodeEditor(document, prefs, find, closeFind, model.jump, { model.goToDefinition(document, it) }, { model.canNavigate(document, it) }) { caret, offset -> model.caret = caret; model.caretOffset = offset } }
+					editorStates.SaveableStateProvider(document.viewKey) {
+						CodeEditor(document, prefs, find, closeFind, model.jump,
+							onNavigate = { model.goToDefinition(document, it) }, canNavigate = { model.canNavigate(document, it) },
+							onFindUsages = { model.findUsages(document, it) }, focusRequest = model.editorFocusRequest,
+							back = if (model.history.canGoBack && !model.busy) model::goBack else null,
+							forward = if (model.history.canGoForward && !model.busy) model::goForward else null,
+							onCaret = { caret, offset -> model.updateCaret(document, caret, offset) })
+					}
 				}
 			}
 		}
 	}
-	if (structure && document != null && document.symbols.isNotEmpty()) HorizontalSplitLayout(
-		first = editor,
-		second = { StructurePanel(document, prefs, model.caretOffset, model::jumpTo) },
-		firstPaneMinWidth = 300.dp, secondPaneMinWidth = 170.dp,
-		state = rememberSplitLayoutState(.79f), modifier = Modifier.fillMaxSize(),
-	) else editor()
+	val editor = remember { movableContentOf { currentEditor() } }
+	val currentContent by rememberUpdatedState<@Composable () -> Unit> {
+		if (structure && document != null && document.symbols.isNotEmpty()) HorizontalSplitLayout(
+			first = editor,
+			second = { StructurePanel(document, prefs, model.caretOffset, model::jumpTo) },
+			firstPaneMinWidth = 300.dp, secondPaneMinWidth = 170.dp,
+			state = rememberSplitLayoutState(.79f), modifier = Modifier.fillMaxSize(),
+		) else editor()
+	}
+	// Moving into/out of the tool-window split must retain editor selection, focus and scroll.
+	val content = remember { movableContentOf { currentContent() } }
+	if (model.usagesVisible) VerticalSplitLayout(
+		first = content, second = { UsagesPanel(model, prefs) }, state = rememberSplitLayoutState(.72f),
+		firstPaneMinWidth = 220.dp, secondPaneMinWidth = 120.dp, modifier = Modifier.fillMaxSize(),
+	) else content()
 }

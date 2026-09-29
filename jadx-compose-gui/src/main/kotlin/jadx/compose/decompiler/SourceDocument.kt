@@ -29,6 +29,7 @@ internal data class SourceDocument(
 	val errors: Int = 0,
 	val warnings: Int = 0,
 	val mode: CodeMode = CodeMode.JAVA,
+	val references: CodeReferences = CodeReferences(),
 ) {
 	val viewKey get() = "${entry.id}:${mode.name}"
 }

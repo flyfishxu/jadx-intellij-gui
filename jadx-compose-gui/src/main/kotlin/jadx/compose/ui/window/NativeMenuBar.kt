@@ -27,7 +27,7 @@ internal fun NativeMenuBar(
 ) {
 	val actions by rememberUpdatedState(MenuActions(open, importMapping, find, search, settings, close, toggleProject, toggleStructure))
 	val menuBar = remember(window, prefs.chinese, prefs.recent, prefs.appearance, model.busy, model.file, model.mapping,
-		model.selectedId, model.selected?.mode, projectVisible, structureVisible) {
+		model.selectedId, model.selected?.mode, model.settingsSelected, model.history.canGoBack, model.history.canGoForward, projectVisible, structureVisible) {
 		MenuBar().apply {
 			add(Menu(prefs.text("File", "文件")).apply {
 				action(prefs.text("Open…", "打开…"), !model.busy, MenuShortcut(KeyEvent.VK_O)) { actions.open() }
@@ -45,6 +45,13 @@ internal fun NativeMenuBar(
 			add(Menu(prefs.text("Search", "搜索")).apply {
 				action(prefs.text("Find in File…", "在文件中查找…"), model.selected != null, MenuShortcut(KeyEvent.VK_F)) { actions.find() }
 				action(prefs.text("Search Everywhere…", "全局搜索…"), model.file != null, MenuShortcut(KeyEvent.VK_F, true)) { actions.search() }
+			})
+			add(Menu(prefs.text("Navigate", "导航")).apply {
+				action(prefs.text("Back", "后退"), model.history.canGoBack && !model.busy, MenuShortcut(KeyEvent.VK_OPEN_BRACKET)) { model.goBack() }
+				action(prefs.text("Forward", "前进"), model.history.canGoForward && !model.busy, MenuShortcut(KeyEvent.VK_CLOSE_BRACKET)) { model.goForward() }
+				addSeparator()
+				action(prefs.text("Go to Declaration", "跳转到声明"), model.selected != null && !model.busy, MenuShortcut(KeyEvent.VK_B)) { model.selected?.let { model.goToDefinition(it, model.caretOffset) } }
+				action(prefs.text("Find Usages", "查找用法"), model.selected != null && !model.busy) { model.selected?.let { model.findUsages(it, model.caretOffset) } }
 			})
 			add(Menu(prefs.text("View", "视图")).apply {
 				check(prefs.text("Project", "项目"), projectVisible) { actions.toggleProject() }

@@ -1,6 +1,8 @@
 package jadx.compose.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -22,7 +24,7 @@ import org.jetbrains.jewel.ui.icons.AllIconsKeys
 
 @Composable
 internal fun SettingsPage(prefs: AppPreferences) {
-	Column(Modifier.fillMaxSize().background(editorBackground)) {
+	Column(Modifier.fillMaxSize().background(editorBackground).verticalScroll(rememberScrollState())) {
 		Column(Modifier.padding(32.dp).widthIn(max = 740.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
 			Text(prefs.text("Appearance & Behavior", "外观与行为"), fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
 			Text(prefs.text("Theme", "主题"), fontWeight = FontWeight.Medium)
@@ -44,6 +46,13 @@ internal fun SettingsPage(prefs: AppPreferences) {
 					}
 				}
 			}
+			Rule()
+			Text(prefs.text("Decompilation", "反编译"), fontWeight = FontWeight.Medium)
+			CheckboxRow(
+				prefs.text("Automatically import mapping.txt beside the APK", "打开 APK 时自动导入同目录的 mapping.txt"),
+				prefs.autoImportMapping,
+				prefs::autoImportMapping,
+			)
 			Rule()
 			Text(prefs.text("Editor", "编辑器"), fontWeight = FontWeight.Medium)
 			Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
